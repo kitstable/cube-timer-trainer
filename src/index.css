@@ -1,0 +1,85 @@
+@import "tailwindcss";
+
+@theme {
+  --color-app-bg: #101116;
+  --color-app-surface: #1A1C23;
+  --color-app-surface-2: #22252E;
+  --color-app-border: #2C2F3A;
+  --color-app-text: #F3F1EA;
+  --color-app-text-muted: #8A8E9C;
+
+  --color-cube-white: #F3F1EA;
+  --color-cube-yellow: #FFD500;
+  --color-cube-gold: #E8A200;
+  --color-cube-red: #C8102E;
+  --color-cube-orange: #FF6D1F;
+  --color-cube-blue: #0057B8;
+  --color-cube-green: #009A44;
+
+  --font-heading: 'Space Grotesk', -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-mono: 'JetBrains Mono', monospace;
+  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+}
+
+:root {
+  --bg: #101116;
+  --surface: #1A1C23;
+  --surface-2: #22252E;
+  --border: #2C2F3A;
+  --text: #F3F1EA;
+  --text-muted: #8A8E9C;
+
+  --white: #F3F1EA;
+  --yellow: #FFD500;
+  --gold: #E8A200;
+  --red: #C8102E;
+  --orange: #FF6D1F;
+  --blue: #0057B8;
+  --green: #009A44;
+}
+
+* {
+  box-sizing: border-box;
+  -webkit-tap-highlight-color: transparent;
+}
+
+body {
+  background-color: #0A0A0D;
+  color: var(--text);
+  font-family: 'Inter', sans-serif;
+  min-height: 100vh;
+  margin: 0;
+  padding: 0;
+  overflow-x: hidden;
+  user-select: none;
+}
+
+/* Custom scrollbars for clean UI */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: var(--bg);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--surface-2);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--border);
+}
+
+/* Tabular figures for timer and stats */
+.font-tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Twisty player custom styles.
+   Do NOT set `display: block` or `height: 100%` here — that overrides cubing/twisty's native
+   `:host { display: grid }` and collapses the internal wrapper/scene chain to 0px, so the
+   WebGL canvas (IntersectionObserver-gated on a non-zero paint area) never initializes and
+   the cube renders blank. TwistyPlayerWrapper sets an explicit pixel height inline instead. */
+twisty-player {
+  width: 100%;
+}

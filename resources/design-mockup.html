@@ -1,0 +1,379 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Cube Trainer — Design Direction</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #101116;
+    --surface: #1A1C23;
+    --surface-2: #22252E;
+    --border: #2C2F3A;
+    --text: #F3F1EA;
+    --text-muted: #8A8E9C;
+
+    --white: #F3F1EA;
+    --yellow: #FFD500;
+    --gold: #E8A200;
+    --red: #C8102E;
+    --orange: #FF6D1F;
+    --blue: #0057B8;
+    --green: #009A44;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: #0A0A0D;
+    font-family: 'Inter', sans-serif;
+    padding: 40px 24px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 32px;
+    justify-content: center;
+  }
+  .label {
+    width: 100%;
+    text-align: center;
+    color: #5A5D68;
+    font-family: 'Inter', sans-serif;
+    font-size: 13px;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    margin-bottom: -8px;
+  }
+  .phone {
+    width: 360px;
+    background: var(--bg);
+    border-radius: 36px;
+    border: 1px solid #2A2C34;
+    padding: 20px 16px 28px;
+    color: var(--text);
+  }
+  .statusbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 12px;
+    color: var(--text-muted);
+    margin-bottom: 18px;
+    font-family: 'JetBrains Mono', monospace;
+  }
+  .conn {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    padding: 4px 10px 4px 8px;
+    font-size: 11px;
+    color: var(--green);
+  }
+  .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--green); }
+
+  h1 {
+    font-family: 'Space Grotesk', sans-serif;
+    font-weight: 600;
+    font-size: 20px;
+    letter-spacing: -0.01em;
+    margin-bottom: 4px;
+  }
+  .subtitle {
+    font-size: 13px;
+    color: var(--text-muted);
+    margin-bottom: 20px;
+  }
+
+  .tabs {
+    display: flex;
+    gap: 6px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 4px;
+    margin-bottom: 22px;
+  }
+  .tab {
+    flex: 1;
+    text-align: center;
+    padding: 8px 0;
+    font-family: 'Space Grotesk', sans-serif;
+    font-size: 13px;
+    font-weight: 500;
+    border-radius: 9px;
+    color: var(--text-muted);
+  }
+  .tab.active { background: var(--surface-2); color: var(--text); }
+
+  .cube-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    padding: 28px 0 20px;
+    margin-bottom: 20px;
+    display: flex;
+    justify-content: center;
+  }
+  .cube-scene { perspective: 900px; }
+  .cube {
+    position: relative;
+    width: 132px;
+    height: 132px;
+    transform-style: preserve-3d;
+    transform: rotateX(-24deg) rotateY(-34deg);
+  }
+  .face {
+    position: absolute;
+    width: 132px;
+    height: 132px;
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    grid-template-rows: repeat(3, 1fr);
+    gap: 3px;
+    padding: 4px;
+    background: #050506;
+    border-radius: 8px;
+  }
+  .face-u { transform: rotateX(90deg) translateZ(66px); }
+  .face-f { transform: translateZ(66px); }
+  .face-r { transform: rotateY(90deg) translateZ(66px); }
+  .sticker { border-radius: 3px; }
+  .sticker.target { outline: 2px solid var(--text); outline-offset: -2px; }
+
+  .hint {
+    text-align: center;
+    margin-bottom: 20px;
+  }
+  .hint-label {
+    font-size: 11px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    margin-bottom: 6px;
+  }
+  .hint-moves {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 26px;
+    font-weight: 500;
+    letter-spacing: 0.02em;
+  }
+  .hint-moves span.done { color: var(--text-muted); }
+  .hint-moves span.next {
+    color: var(--bg);
+    background: var(--white);
+    padding: 2px 6px;
+    border-radius: 5px;
+  }
+
+  .rail {
+    display: flex;
+    gap: 3px;
+    height: 8px;
+    border-radius: 5px;
+    overflow: hidden;
+    margin-bottom: 8px;
+  }
+  .seg { flex: 1; background: var(--surface-2); }
+  .seg.done { opacity: 1; }
+  .seg.current { opacity: 1; box-shadow: 0 0 0 1px var(--bg), 0 0 0 2px currentColor; }
+  .seg.upcoming { background: var(--surface-2); }
+  .rail-labels {
+    display: flex;
+    justify-content: space-between;
+    font-size: 10px;
+    color: var(--text-muted);
+    font-family: 'JetBrains Mono', monospace;
+    margin-bottom: 24px;
+  }
+
+  .cta {
+    width: 100%;
+    padding: 16px 0;
+    border-radius: 14px;
+    border: none;
+    font-family: 'Space Grotesk', sans-serif;
+    font-weight: 600;
+    font-size: 15px;
+    text-align: center;
+  }
+  .cta-primary { background: var(--white); color: var(--bg); }
+  .cta-ghost {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text);
+    margin-top: 10px;
+  }
+
+  .timer-display {
+    text-align: center;
+    padding: 36px 0 28px;
+  }
+  .timer-phase {
+    font-size: 12px;
+    color: var(--green);
+    font-family: 'JetBrains Mono', monospace;
+    letter-spacing: 0.04em;
+    margin-bottom: 10px;
+  }
+  .timer-digits {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 56px;
+    font-weight: 500;
+    letter-spacing: -0.02em;
+    font-variant-numeric: tabular-nums;
+  }
+  .timer-digits .ms { color: var(--text-muted); font-size: 28px; }
+
+  .splits {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 6px 4px;
+    margin-bottom: 20px;
+  }
+  .split-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 12px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 13px;
+  }
+  .split-row + .split-row { border-top: 1px solid var(--border); }
+  .split-chip { width: 8px; height: 8px; border-radius: 2px; flex-shrink: 0; }
+  .split-name { flex: 1; color: var(--text-muted); font-family: 'Inter', sans-serif; font-size: 13px; }
+  .split-time { color: var(--text); }
+</style>
+</head>
+<body>
+
+<div class="label">Guided solve</div>
+<div class="phone">
+  <div class="statusbar">
+    <span>9:41</span>
+    <div class="conn"><span class="dot"></span>QiYi AI 3x3</div>
+  </div>
+  <h1>Guided solve</h1>
+  <div class="subtitle">F2L — slot 2 of 4</div>
+
+  <div class="tabs">
+    <div class="tab">Timed</div>
+    <div class="tab active">Guided</div>
+  </div>
+
+  <div class="cube-card">
+    <div class="cube-scene">
+      <div class="cube">
+        <div class="face face-u">
+          <div class="sticker" style="background:var(--yellow)"></div>
+          <div class="sticker" style="background:var(--red)"></div>
+          <div class="sticker" style="background:var(--yellow)"></div>
+          <div class="sticker" style="background:var(--yellow)"></div>
+          <div class="sticker" style="background:var(--yellow)"></div>
+          <div class="sticker" style="background:var(--blue)"></div>
+          <div class="sticker" style="background:var(--yellow)"></div>
+          <div class="sticker" style="background:var(--yellow)"></div>
+          <div class="sticker" style="background:var(--orange)"></div>
+        </div>
+        <div class="face face-f">
+          <div class="sticker" style="background:var(--green)"></div>
+          <div class="sticker" style="background:var(--green)"></div>
+          <div class="sticker" style="background:var(--red)"></div>
+          <div class="sticker" style="background:var(--green)"></div>
+          <div class="sticker" style="background:var(--green)"></div>
+          <div class="sticker" style="background:var(--green)"></div>
+          <div class="sticker" style="background:var(--green)"></div>
+          <div class="sticker" style="background:var(--green)"></div>
+          <div class="sticker" style="background:var(--green)"></div>
+        </div>
+        <div class="face face-r">
+          <div class="sticker" style="background:var(--blue)"></div>
+          <div class="sticker" style="background:var(--orange)"></div>
+          <div class="sticker target" style="background:var(--blue)"></div>
+          <div class="sticker" style="background:var(--blue)"></div>
+          <div class="sticker" style="background:var(--blue)"></div>
+          <div class="sticker" style="background:var(--blue)"></div>
+          <div class="sticker" style="background:var(--blue)"></div>
+          <div class="sticker" style="background:var(--blue)"></div>
+          <div class="sticker" style="background:var(--blue)"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="hint">
+    <div class="hint-label">Next moves</div>
+    <div class="hint-moves"><span class="done">U'</span> <span class="next">R</span> U R'</div>
+  </div>
+
+  <div class="rail">
+    <div class="seg done" style="background:var(--white)"></div>
+    <div class="seg done" style="background:var(--green)"></div>
+    <div class="seg current" style="background:var(--blue); color:var(--blue)"></div>
+    <div class="seg upcoming"></div>
+    <div class="seg upcoming"></div>
+    <div class="seg upcoming" style="background:var(--gold)"></div>
+    <div class="seg upcoming" style="background:var(--gold)"></div>
+  </div>
+  <div class="rail-labels">
+    <span>cross</span><span>f2l</span><span>oll</span><span>pll</span>
+  </div>
+
+  <button class="cta cta-primary">Next move</button>
+  <button class="cta cta-ghost">Resync to cube</button>
+</div>
+
+<div class="label">Timed solve</div>
+<div class="phone">
+  <div class="statusbar">
+    <span>9:41</span>
+    <div class="conn"><span class="dot"></span>QiYi AI 3x3</div>
+  </div>
+  <h1>Timed solve</h1>
+  <div class="subtitle">Session average · 5 solves</div>
+
+  <div class="tabs">
+    <div class="tab active">Timed</div>
+    <div class="tab">Guided</div>
+  </div>
+
+  <div class="timer-display">
+    <div class="timer-phase">solving — f2l</div>
+    <div class="timer-digits">14.<span class="ms">92</span></div>
+  </div>
+
+  <div class="splits">
+    <div class="split-row">
+      <div class="split-chip" style="background:var(--white)"></div>
+      <div class="split-name">Inspection</div>
+      <div class="split-time">3.10</div>
+    </div>
+    <div class="split-row">
+      <div class="split-chip" style="background:var(--white)"></div>
+      <div class="split-name">Cross</div>
+      <div class="split-time">1.84</div>
+    </div>
+    <div class="split-row">
+      <div class="split-chip" style="background:var(--green)"></div>
+      <div class="split-name">F2L 1</div>
+      <div class="split-time">2.61</div>
+    </div>
+    <div class="split-row">
+      <div class="split-chip" style="background:var(--red)"></div>
+      <div class="split-name">F2L 2</div>
+      <div class="split-time">3.05</div>
+    </div>
+    <div class="split-row">
+      <div class="split-chip" style="background:var(--blue)"></div>
+      <div class="split-name">F2L 3 — running</div>
+      <div class="split-time">…</div>
+    </div>
+  </div>
+
+  <button class="cta cta-primary">Stop</button>
+</div>
+
+</body>
+</html>
