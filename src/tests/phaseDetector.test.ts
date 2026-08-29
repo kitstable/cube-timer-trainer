@@ -29,6 +29,25 @@ describe('CFOP Phase Detector', () => {
     expect(status.isFullySolved).toBe(false);
   });
 
+  it('correctly detects solved state in default physical frame', async () => {
+    const kp = await getKPuzzle();
+    const pattern = kp.defaultPattern();
+    const status = evaluateCFOPFromPattern(pattern);
+
+    expect(status.isFullySolved).toBe(true);
+    expect(status.currentPhase).toBe('solved');
+  });
+
+  it('correctly detects solved state across whole-cube rotations (e.g. y, x2, z)', async () => {
+    const kp = await getKPuzzle();
+    for (const rot of ['y', "y'", 'y2', 'x', 'x2', 'z', "z'"]) {
+      const rotatedSolved = kp.defaultPattern().applyAlg(new Alg(rot));
+      const status = evaluateCFOPFromPattern(rotatedSolved);
+      expect(status.isFullySolved).toBe(true);
+      expect(status.currentPhase).toBe('solved');
+    }
+  });
+
   it('maintains monotonic progression across temporary disruption moves', () => {
     // Current highest phase is F2L-3
     const resolved = resolveMonotonicCFOPPhase('f2l-3', ['FR', 'FL'], {

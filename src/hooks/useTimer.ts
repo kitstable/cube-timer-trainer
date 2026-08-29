@@ -15,7 +15,7 @@ export function useTimer() {
   const [inspectionRemainingMs, setInspectionRemainingMs] = useState(15000);
   const [lastCompletedSolve, setLastCompletedSolve] = useState<Solve | null>(null);
 
-  const { phaseStatus, monotonicPhase, smartCube, lastMoveTimestamp, resetSolveTracking } = useCubeStore();
+  const { phaseStatus, monotonicPhase, smartCube, lastMove, lastMoveTimestamp, resetSolveTracking } = useCubeStore();
   const { currentProfileId, scrambleMoves, activeMode } = useAppStore();
 
   const startTimestampRef = useRef<number>(0);
@@ -26,79 +26,6 @@ export function useTimer() {
 
   const phaseTimingsRef = useRef<{ phase: CFOPPhase; start: number; end: number }[]>([]);
   const currentPhaseRef = useRef<CFOPPhase>('cross');
-
-  // Auto-start solve on physical turn when smart cube is connected and timer is idle / inspecting
-  useEffect(() => {
-    if (activeMode !== 'timed' || !smartCube.isConnected || !lastMoveTimestamp) return;
-    if (lastMoveTimestamp <= lastProcessedMoveTsRef.current) return;
-    lastProcessedMoveTsRef.current = lastMoveTimestamp;
-
-    if (timerState === 'idle' || timerState === 'inspection') {
-      startSolve();
-    }
-  }, [activeMode, smartCube.isConnected, lastMoveTimestamp, timerState]);
-
-  // Sync current phase during solve
-  useEffect(() => {
-    if (timerState !== 'running') return;
-
-    if (monotonicPhase !== currentPhaseRef.current) {
-      const now = performance.now();
-      const prevPhase = currentPhaseRef.current;
-
-      // Close previous phase
-      const existing = phaseTimingsRef.current.find((p) => p.phase === prevPhase);
-      if (existing) {
-        existing.end = now;
-      } else {
-        phaseTimingsRef.current.push({ phase: prevPhase, start: startTimestampRef.current, end: now });
-      }
-
-      // Open new phase
-      phaseTimingsRef.current.push({ phase: monotonicPhase, start: now, end: now });
-      currentPhaseRef.current = monotonicPhase;
-    }
-  }, [monotonicPhase, timerState]);
-
-  // Handle completion when cube becomes solved in running state
-  useEffect(() => {
-    if (timerState === 'running' && phaseStatus.isFullySolved) {
-      stopTimer();
-    }
-  }, [timerState, phaseStatus.isFullySolved]);
-
-
-  const updateRunningTime = useCallback(() => {
-    if (timerState === 'running') {
-      const now = performance.now();
-      const current = Math.max(0, now - startTimestampRef.current);
-      setElapsedMs(current);
-      animFrameRef.current = requestAnimationFrame(updateRunningTime);
-    } else if (timerState === 'inspection') {
-      const now = performance.now();
-      const spent = now - inspectionStartRef.current;
-      const remaining = Math.max(0, 15000 - spent);
-      setInspectionRemainingMs(remaining);
-
-      if (remaining === 0) {
-        // Auto start solve if inspection runs out
-        startSolve();
-      } else {
-        animFrameRef.current = requestAnimationFrame(updateRunningTime);
-      }
-    }
-  }, [timerState]);
-
-  useEffect(() => {
-    if (timerState === 'running' || timerState === 'inspection') {
-      animFrameRef.current = requestAnimationFrame(updateRunningTime);
-    }
-    return () => {
-      if (animFrameRef.current) {
-        cancelAnimationFrame(animFrameRef.current);
-      }
-    };
-  }, [timerState, updateRunningTime]);
 
   const startInspection = useCallback(() => {
     setTimerState('inspection');
@@ -170,6 +97,79 @@ export function useTimer() {
     setElapsedMs(0);
     setInspectionRemainingMs(15000);
   }, []);
+
+  // Auto-start solve on physical turn when smart cube is connected and timer is idle / inspecting
+  useEffect(() => {
+    if (activeMode !== 'timed' || !smartCube.isConnected || !lastMoveTimestamp || !lastMove) return;
+    if (lastMoveTimestamp <= lastProcessedMoveTsRef.current) return;
+    lastProcessedMoveTsRef.current = lastMoveTimestamp;
+
+    if (timerState === 'idle' || timerState === 'inspection') {
+      startSolve();
+    }
+  }, [activeMode, smartCube.isConnected, lastMoveTimestamp, lastMove, timerState, startSolve]);
+
+  // Sync current phase during solve
+  useEffect(() => {
+    if (timerState !== 'running') return;
+
+    if (monotonicPhase !== currentPhaseRef.current) {
+      const now = performance.now();
+      const prevPhase = currentPhaseRef.current;
+
+      // Close previous phase
+      const existing = phaseTimingsRef.current.find((p) => p.phase === prevPhase);
+      if (existing) {
+        existing.end = now;
+      } else {
+        phaseTimingsRef.current.push({ phase: prevPhase, start: startTimestampRef.current, end: now });
+      }
+
+      // Open new phase
+      phaseTimingsRef.current.push({ phase: monotonicPhase, start: now, end: now });
+      currentPhaseRef.current = monotonicPhase;
+    }
+  }, [monotonicPhase, timerState]);
+
+  // Handle completion when cube becomes solved in running state
+  useEffect(() => {
+    if (timerState === 'running' && phaseStatus.isFullySolved) {
+      stopTimer();
+    }
+  }, [timerState, phaseStatus.isFullySolved, stopTimer]);
+
+
+  const updateRunningTime = useCallback(() => {
+    if (timerState === 'running') {
+      const now = performance.now();
+      const current = Math.max(0, now - startTimestampRef.current);
+      setElapsedMs(current);
+      animFrameRef.current = requestAnimationFrame(updateRunningTime);
+    } else if (timerState === 'inspection') {
+      const now = performance.now();
+      const spent = now - inspectionStartRef.current;
+      const remaining = Math.max(0, 15000 - spent);
+      setInspectionRemainingMs(remaining);
+
+      if (remaining === 0) {
+        // Auto start solve if inspection runs out
+        startSolve();
+      } else {
+        animFrameRef.current = requestAnimationFrame(updateRunningTime);
+      }
+    }
+  }, [timerState, startSolve]);
+
+  useEffect(() => {
+    if (timerState === 'running' || timerState === 'inspection') {
+      animFrameRef.current = requestAnimationFrame(updateRunningTime);
+    }
+    return () => {
+      if (animFrameRef.current) {
+        cancelAnimationFrame(animFrameRef.current);
+      }
+    };
+  }, [timerState, updateRunningTime]);
 
   // Handle Spacebar & Touch Hold-to-Start interactions
   const handleHoldStart = useCallback(() => {

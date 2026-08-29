@@ -1,6 +1,7 @@
 import React from 'react';
 import { Bluetooth, X, AlertCircle, RefreshCw, Unlink } from 'lucide-react';
 import { useCubeStore } from '../store/useCubeStore';
+import { useAppStore } from '../store/useAppStore';
 import { useSmartCube } from '../hooks/useSmartCube';
 
 interface ConnectionModalProps {
@@ -55,6 +56,7 @@ export const ConnectionModal: React.FC<ConnectionModalProps> = ({ isOpen, onClos
               <button
                 onClick={async () => {
                   await resyncFromCube();
+                  onClose();
                 }}
                 className="flex-1 py-2.5 rounded-xl font-heading font-medium text-xs bg-[var(--surface-2)] border border-[var(--border)] text-[var(--text)] hover:bg-[var(--border)] transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
               >
@@ -65,6 +67,8 @@ export const ConnectionModal: React.FC<ConnectionModalProps> = ({ isOpen, onClos
               <button
                 onClick={() => {
                   useCubeStore.getState().resetToSolved();
+                  useAppStore.getState().setMode('scramble');
+                  onClose();
                 }}
                 className="flex-1 py-2.5 rounded-xl font-heading font-medium text-xs bg-[var(--surface-2)] border border-[var(--border)] text-[var(--text)] hover:bg-[var(--border)] transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
               >
@@ -100,6 +104,9 @@ export const ConnectionModal: React.FC<ConnectionModalProps> = ({ isOpen, onClos
             <button
               onClick={async () => {
                 await connect();
+                if (!useCubeStore.getState().smartCube.error) {
+                  onClose();
+                }
               }}
               disabled={smartCube.isConnecting}
               className="w-full py-3.5 rounded-xl font-heading font-semibold text-sm bg-[var(--white)] text-[var(--bg)] hover:opacity-90 active:scale-[0.99] transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-60"

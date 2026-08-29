@@ -100,15 +100,28 @@ export function isOLLSolved(p: PatternLike): boolean {
   );
 }
 
-/** Every edge and corner home and oriented (post-z2 solved). Pure — no globals. */
+/** Every edge and corner home and oriented (solved cube in post-z2 or standard orientation). Pure. */
 export function isFullySolved(p: PatternLike): boolean {
   const d = data(p);
-  return (
-    d.EDGES.pieces.every((v, i) => v === SOLVED_EDGE_PIECES[i]) &&
-    d.EDGES.orientation.every((o) => o === 0) &&
-    d.CORNERS.pieces.every((v, i) => v === SOLVED_CORNER_PIECES[i]) &&
-    d.CORNERS.orientation.every((o) => o === 0)
-  );
+  if (!d || !d.EDGES || !d.CORNERS) return false;
+
+  const isPostZ2 =
+    d.EDGES.pieces.every((v: number, i: number) => v === SOLVED_EDGE_PIECES[i]) &&
+    d.EDGES.orientation.every((o: number) => o === 0) &&
+    d.CORNERS.pieces.every((v: number, i: number) => v === SOLVED_CORNER_PIECES[i]) &&
+    d.CORNERS.orientation.every((o: number) => o === 0);
+
+  if (isPostZ2) return true;
+
+  const isDefault =
+    d.EDGES.pieces.every((v: number, i: number) => v === i) &&
+    d.EDGES.orientation.every((o: number) => o === 0) &&
+    d.CORNERS.pieces.every((v: number, i: number) => v === i) &&
+    d.CORNERS.orientation.every((o: number) => o === 0);
+
+  if (isDefault) return true;
+
+  return false;
 }
 
 /**

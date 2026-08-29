@@ -1,5 +1,6 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import { Play, Square, RotateCcw } from 'lucide-react';
+import { TwistyPlayerWrapper } from '../TwistyPlayerWrapper';
 import { useTimer } from '../../hooks/useTimer';
 import { useCubeStore } from '../../store/useCubeStore';
 import { useAppStore } from '../../store/useAppStore';
@@ -22,9 +23,16 @@ export const TimedSolveView: React.FC = () => {
     handleHoldRelease,
   } = useTimer();
 
-  const { monotonicPhase, smartCube } = useCubeStore();
-  const { currentProfileId } = useAppStore();
+  const { monotonicPhase, smartCube, moveHistory, phaseStatus } = useCubeStore();
+  const { currentProfileId, currentScramble, setMode } = useAppStore();
   const [stats, setStats] = useState<SessionStats | null>(null);
+
+  // Moves made during this solve
+  const solveMovesAlg = useMemo(() => {
+    return moveHistory.map((m) => m.move).join(' ');
+  }, [moveHistory]);
+
+  const setupAlg = currentScramble || '';
 
   // Load session stats
   const loadStats = async () => {
@@ -97,7 +105,7 @@ export const TimedSolveView: React.FC = () => {
       onTouchStart={handleHoldStart}
       onTouchEnd={handleHoldRelease}
     >
-      <div className="mb-1">
+      <div className="mb-2">
         <h1 className="font-heading font-semibold text-xl tracking-tight text-[var(--text)]">
           Timed solve
         </h1>
@@ -112,10 +120,26 @@ export const TimedSolveView: React.FC = () => {
         </div>
       </div>
 
+      {/* 3D Cube Visualizer Card */}
+      <div className="bg-[var(--surface)] border border-[var(--border)] rounded-2xl p-2 mb-2 flex items-center justify-center min-h-[190px] relative">
+        <TwistyPlayerWrapper
+          setupAlg={setupAlg}
+          alg={solveMovesAlg}
+          tempoScale={3}
+          height={180}
+        />
+        {smartCube.isConnected && (
+          <div className="absolute top-2.5 left-2.5 px-2 py-0.5 rounded-md bg-[var(--surface-2)]/90 border border-[var(--border)] text-[10px] font-mono text-[var(--green)] flex items-center gap-1.5 backdrop-blur-xs">
+            <span className="w-1.5 h-1.5 rounded-full bg-[var(--green)] animate-pulse" />
+            <span>Live Sync</span>
+          </div>
+        )}
+      </div>
+
       {/* Main Timer Display */}
-      <div className="text-center py-8 my-auto">
+      <div className="text-center py-4 my-auto">
         <div
-          className={`font-mono text-xs tracking-wider uppercase mb-2.5 font-medium transition-colors ${
+          className={`font-mono text-xs tracking-wider uppercase mb-1.5 font-medium transition-colors ${
             timerState === 'running'
               ? 'text-[var(--green)]'
               : timerState === 'inspection'
@@ -126,13 +150,13 @@ export const TimedSolveView: React.FC = () => {
           {phaseStatusLabel}
         </div>
 
-        <div className={`font-mono text-6xl font-medium tracking-tight font-tabular transition-colors ${timerTextColor}`}>
+        <div className={`font-mono text-5xl font-medium tracking-tight font-tabular transition-colors ${timerTextColor}`}>
           {timerState === 'inspection' ? (
             <span>{formattedInspection}</span>
           ) : (
             <>
               {formattedSolveTime.seconds}.
-              <span className="text-3xl text-[var(--text-muted)]">
+              <span className="text-2xl text-[var(--text-muted)]">
                 {formattedSolveTime.millis}
               </span>
             </>
@@ -140,7 +164,7 @@ export const TimedSolveView: React.FC = () => {
         </div>
 
         {timerState === 'idle' && (
-          <div className="text-xs text-[var(--text-muted)] mt-2 font-mono">
+          <div className="text-xs text-[var(--text-muted)] mt-1.5 font-mono">
             {smartCube.isConnected ? 'Cube ready · Turn to start solve' : 'Touch & hold or press Space'}
           </div>
         )}
@@ -226,11 +250,14 @@ export const TimedSolveView: React.FC = () => {
             onClick={(e) => {
               e.stopPropagation();
               resetTimer();
+              if (phaseStatus.isFullySolved) {
+                setMode('scramble');
+              }
             }}
             className="w-full py-3.5 rounded-xl font-heading font-semibold text-[15px] bg-[var(--white)] text-[var(--bg)] hover:opacity-90 active:scale-[0.99] transition-all flex items-center justify-center gap-2 cursor-pointer shadow-sm"
           >
             <RotateCcw className="w-4 h-4" />
-            <span>New Solve</span>
+            <span>{phaseStatus.isFullySolved ? 'Next Scramble' : 'New Solve'}</span>
           </button>
         ) : (
           <button

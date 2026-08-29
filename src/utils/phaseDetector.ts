@@ -2,7 +2,7 @@ import type { KPattern } from 'cubing/kpuzzle';
 import { Alg } from 'cubing/alg';
 import type { CFOPPhase, F2LSlotId, PhaseStatus } from '../types/cube';
 import { CFOP_PHASE_ORDER } from './constants';
-import { getKPuzzle } from './kpuzzleHelper';
+import { getKPuzzle, isPatternSolved } from './kpuzzleHelper';
 import {
   isCrossSolved as crossSolved,
   isOLLSolved as ollSolved,
@@ -18,11 +18,24 @@ import {
  * Fast, pure (no lazy-global dependency), and non-blocking for per-move use.
  */
 export function evaluateCFOPFromPattern(pattern: KPattern): PhaseStatus {
+  const isSolved = fullySolved(pattern) || isPatternSolved(pattern);
+  if (isSolved) {
+    return {
+      isCrossSolved: true,
+      solvedSlots: ['FR', 'FL', 'BR', 'BL'],
+      isF2LSolved: true,
+      isOLLSolved: true,
+      isPLLSolved: true,
+      isFullySolved: true,
+      currentPhase: 'solved',
+    };
+  }
+
   const isCrossSolved = crossSolved(pattern);
   const solvedSlots = detectSolvedSlots(pattern) as F2LSlotId[];
   const isF2LSolved = isCrossSolved && solvedSlots.length === 4;
   const isOLLSolved = ollSolved(pattern);
-  const isFullySolved = fullySolved(pattern);
+  const isFullySolved = false;
 
   // PLL: OLL solved and the last layer is permuted up to an AUF (U / U' / U2).
   let isPLLSolved = isFullySolved;

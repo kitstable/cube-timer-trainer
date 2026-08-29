@@ -40,20 +40,35 @@ export function useSmartCube() {
 
       // 1. Sync physical pattern from smart cube if supported
       try {
+        let initialPattern = null;
         if (typeof puzzle.getPattern === 'function') {
-          const initialPattern = await puzzle.getPattern();
-          if (initialPattern) {
-            syncPhysicalPattern(initialPattern);
-            const solved = isPatternSolved(initialPattern);
-            if (solved) {
-              setMode('scramble');
-            } else {
-              setMode('timed');
-            }
+          try {
+            initialPattern = await puzzle.getPattern();
+          } catch (getPatErr) {
+            console.warn('Physical cube getPattern() failed or unsupported:', getPatErr);
+          }
+        }
+
+        if (initialPattern) {
+          syncPhysicalPattern(initialPattern);
+          const solved = isPatternSolved(initialPattern);
+          if (solved) {
+            setMode('scramble');
+          } else {
+            setMode('timed');
+          }
+        } else {
+          // If getPattern is not supported (e.g. GoCube), check store pattern or default to scramble
+          const cur = useCubeStore.getState().pattern;
+          if (cur && !isPatternSolved(cur)) {
+            setMode('timed');
+          } else {
+            setMode('scramble');
           }
         }
       } catch (patternErr) {
-        console.warn('Physical cube initial getPattern not available or failed:', patternErr);
+        console.warn('Physical cube initial sync failed:', patternErr);
+        setMode('scramble');
       }
 
       // 2. Listen for live turns from smart cube
@@ -64,16 +79,18 @@ export function useSmartCube() {
         const moveStr = latestLeaf.toString().trim();
         if (!moveStr) return;
 
+        const timestamp = typeof leafEvent?.timeStamp === 'number' && leafEvent.timeStamp > 0
+          ? leafEvent.timeStamp
+          : Date.now();
+
         // Dispatch move directly to store
-        applyMove(moveStr);
+        applyMove(moveStr, timestamp);
 
         // If in Scramble mode, check expected move and advance
-        const currentScrambleMoves = useAppStore.getState().scrambleMoves;
-        const currentProg = useAppStore.getState().scrambleProgressIndex;
-        const currentMode = useAppStore.getState().activeMode;
+        const { activeMode, scrambleMoves, scrambleProgressIndex } = useAppStore.getState();
 
-        if (currentMode === 'scramble' && currentScrambleMoves.length > 0) {
-          const expected = currentScrambleMoves[currentProg];
+        if (activeMode === 'scramble' && scrambleMoves.length > 0) {
+          const expected = scrambleMoves[scrambleProgressIndex];
           if (expected && expected === moveStr) {
             advanceScrambleProgress();
           }
@@ -81,7 +98,7 @@ export function useSmartCube() {
       });
 
       // 3. Handle disconnect event
-      const device = puzzle.device || (puzzle.server && puzzle.server.device);
+      const device = puzzle.device || puzzle.server?.device || puzzle.primaryService?.device;
       if (device && device.addEventListener) {
         device.addEventListener('gattserverdisconnected', () => {
           activeSmartPuzzle = null;
@@ -137,12 +154,18 @@ export function useSmartCube() {
         const p = await activeSmartPuzzle.getPattern();
         if (p) {
           syncPhysicalPattern(p);
+          const solved = isPatternSolved(p);
+          if (solved) {
+            setMode('scramble');
+          } else {
+            setMode('timed');
+          }
         }
       }
     } catch (err) {
       console.warn('Failed to resync pattern from physical cube:', err);
     }
-  }, [syncPhysicalPattern]);
+  }, [syncPhysicalPattern, setMode]);
 
   return {
     connect,

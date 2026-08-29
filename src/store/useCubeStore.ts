@@ -79,11 +79,12 @@ export const useCubeStore = create<CubeStoreState>((set, get) => ({
       const status = evaluateCFOPFromPattern(pattern);
       set({
         pattern,
+        scramblePattern: pattern,
         phaseStatus: status,
         monotonicPhase: status.currentPhase,
         solvedSlots: status.solvedSlots,
         lastMove: null,
-        lastMoveTimestamp: Date.now(),
+        lastMoveTimestamp: 0,
         moveHistory: [],
       });
     } catch (err) {
