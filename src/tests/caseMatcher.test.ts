@@ -3,6 +3,7 @@ import { cube3x3x3 } from 'cubing/puzzles';
 import { Alg } from 'cubing/alg';
 import { CaseMatcher } from '../solver/caseMatcher';
 import { simplifyMoveSequence, simplifyAlgString } from '../utils/moveSimplifier';
+import { isSlotSolved, isCrossSolved, type F2LSlot } from '../solver/cfopInvariants';
 import algorithmData from '../data/cfop-algorithms.json';
 
 describe('Move Simplifier & Cancellation', () => {
@@ -203,6 +204,45 @@ describe('CFOP Case Matcher', () => {
     expect(corners.orientation[5]).toBe(0);
     expect(edges.pieces[9]).toBe(8);
     expect(edges.orientation[9]).toBe(0);
+  });
+
+  it('matchF2L never returns a no-op for an already-solved slot (regression: "goes in circles")', () => {
+    // FR is solved; FL pair sits in the U layer ready to insert. Ask for FL.
+    const pattern = solvedPostZ2.applyAlg(new Alg("F' L F L'").invert()); // FL case setup, FR still solved
+    expect(isSlotSolved(pattern, 'FR')).toBe(true);
+    expect(isSlotSolved(pattern, 'FL')).toBe(false);
+
+    const match = matcher.matchF2L(pattern, 'FL', false, 'simplified');
+    expect(match).not.toBeNull();
+    expect(match!.moves.length).toBeGreaterThan(0);
+
+    const after = pattern.applyAlg(new Alg(match!.moves.join(' ')));
+    expect(isSlotSolved(after, 'FL'), 'FL must actually be solved').toBe(true);
+    expect(isSlotSolved(after, 'FR'), 'FR must stay solved').toBe(true);
+    expect(isCrossSolved(after)).toBe(true);
+    // and it must not be the FR "U R U' R'" no-op
+    expect(match!.moves.join(' ')).not.toBe("U R U' R'");
+  });
+
+  it('every F2L slot variant solves its own slot from the dataset', () => {
+    const cases: Array<[F2LSlot, string]> = [
+      ['FR', 'F2L 1 - Front Right'],
+      ['FL', 'F2L 1 - Front Left'],
+      ['BR', 'F2L 1 - Back Right'],
+      ['BL', 'F2L 1 - Back Left'],
+      ['FR', 'F2L 18 - Front Right'],
+      ['FL', 'F2L 18 - Front Left'],
+      ['BR', 'F2L 18 - Back Right'],
+      ['BL', 'F2L 18 - Back Left'],
+    ];
+    for (const [slot, name] of cases) {
+      const entry = (algorithmData as any).F2L.find((e: any) => e.name === name);
+      const setup = solvedPostZ2.applyAlg(new Alg(entry.algorithm).invert());
+      const match = matcher.matchF2L(setup, slot, false, 'standard');
+      expect(match, name).not.toBeNull();
+      const after = setup.applyAlg(new Alg(match!.moves.join(' ')));
+      expect(isSlotSolved(after, slot), `${name} -> ${slot}`).toBe(true);
+    }
   });
 });
 

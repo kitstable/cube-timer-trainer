@@ -4,6 +4,12 @@ import type { AlgorithmDataset } from '../types/solver';
 import type { NotationMode } from '../types/cube';
 import { parseAlgSafely, normalizeAlgString } from '../utils/algNormalizer';
 import { simplifyMoveSequence } from '../utils/moveSimplifier';
+import {
+  F2L_SLOT_TARGETS,
+  isSlotSolved as isSlotSolvedShared,
+  preservesProgress,
+  type F2LSlot,
+} from './cfopInvariants';
 
 export interface PrecomputedCase {
   name: string;
@@ -139,7 +145,7 @@ export class CaseMatcher {
       const algSimplifiedObj = parseAlgSafely(simplifiedStr);
       const algSimplifiedMoves = Array.from(algSimplifiedObj.experimentalLeafMoves()).map((m) => m.toString());
 
-      const hasRotation = entry.algorithm.includes('y') || entry.algorithm.includes('y\'');
+      const hasRotation = algMoves.some((m) => m.startsWith('x') || m.startsWith('y') || m.startsWith('z'));
 
       let targetSlot = 'FR';
       if (entry.name.includes('Front Left')) targetSlot = 'FL';
@@ -541,9 +547,11 @@ export class CaseMatcher {
     preferRotationless = false,
     notationMode: NotationMode = 'simplified'
   ): MatchResult | null {
-    let candidates = preferredSlot
-      ? this.f2lCases.filter((c) => c.targetSlot === preferredSlot)
-      : [...this.f2lCases];
+    // Only ever solve the requested slot. Never fall back to "any slot" — a
+    // sequence that happens to leave some *already-solved* slot solved is a
+    // no-op for the slot we actually need and makes the guided walkthrough loop.
+    const slot = (preferredSlot || 'FR') as F2LSlot;
+    const candidates = this.f2lCases.filter((c) => c.targetSlot === slot);
 
     if (preferRotationless) {
       candidates.sort((a, b) => (a.hasRotation === b.hasRotation ? 0 : a.hasRotation ? 1 : -1));
@@ -554,7 +562,10 @@ export class CaseMatcher {
 
       for (const c of candidates) {
         const resultPattern = patternToTest.applyAlg(parseAlgSafely(c.algorithm));
-        if (this.isSlotSolved(resultPattern, c.targetSlot || 'FR')) {
+        if (
+          isSlotSolvedShared(resultPattern, slot) &&
+          preservesProgress(livePattern, resultPattern)
+        ) {
           const selectedMoves = notationMode === 'simplified' ? c.algSimplifiedMoves : c.algMoves;
           const selectedAlg = notationMode === 'simplified' ? c.algorithmSimplified : c.algorithm;
           const rawMoves = auf ? [auf, ...selectedMoves] : [...selectedMoves];
@@ -568,10 +579,6 @@ export class CaseMatcher {
           };
         }
       }
-    }
-
-    if (preferredSlot && candidates.length < this.f2lCases.length) {
-      return this.matchF2L(livePattern, undefined, preferRotationless, notationMode);
     }
 
     return null;
@@ -645,7 +652,7 @@ export class CaseMatcher {
       for (const entry of intuitiveLibrary) {
         if (preferredSlot && entry.slot !== preferredSlot) continue;
         const res = patternToTest.applyAlg(parseAlgSafely(entry.alg));
-        if (this.isSlotSolved(res, entry.slot)) {
+        if (isSlotSolvedShared(res, entry.slot as F2LSlot) && preservesProgress(livePattern, res)) {
           const algObj = parseAlgSafely(entry.alg);
           const algMoves = Array.from(algObj.experimentalLeafMoves()).map((m) => m.toString());
           const rawMoves = auf ? [auf, ...algMoves] : algMoves;
@@ -672,7 +679,10 @@ export class CaseMatcher {
 
       for (const c of pureCandidates) {
         const res = patternToTest.applyAlg(parseAlgSafely(c.algorithm));
-        if (this.isSlotSolved(res, c.targetSlot || 'FR')) {
+        if (
+          isSlotSolvedShared(res, (c.targetSlot || 'FR') as F2LSlot) &&
+          preservesProgress(livePattern, res)
+        ) {
           const rawMoves = auf ? [auf, ...c.algMoves] : [...c.algMoves];
           return {
             caseName: `Intuitive F2L · Pair & Insert (${c.targetSlot || 'Slot'})`,
@@ -693,23 +703,15 @@ export class CaseMatcher {
       BL: ["L U L'", "L U' L'", "L U2 L'", "B' U' B", "B' U B"],
     };
 
-    const targets: Record<string, { cSlot: number; cPiece: number; eSlot: number; ePiece: number }> = {
-      FR: { cSlot: 4, cPiece: 3, eSlot: 8, ePiece: 9 },
-      FL: { cSlot: 5, cPiece: 0, eSlot: 9, ePiece: 8 },
-      BL: { cSlot: 6, cPiece: 1, eSlot: 10, ePiece: 11 },
-      BR: { cSlot: 7, cPiece: 2, eSlot: 11, ePiece: 10 },
-    };
-
-
     const slotsToTry = preferredSlot ? [preferredSlot] : ['FR', 'FL', 'BR', 'BL'];
 
     for (const slot of slotsToTry) {
-      const t = targets[slot];
+      const t = F2L_SLOT_TARGETS[slot as F2LSlot];
       if (!t) continue;
 
       // Locate where this slot's corner and edge pieces are physically trapped
-      const cornerLocation = this.getSlotForPiece(t.cPiece, true, livePattern);
-      const edgeLocation = this.getSlotForPiece(t.ePiece, false, livePattern);
+      const cornerLocation = this.getSlotForPiece(t.cornerPiece, true, livePattern);
+      const edgeLocation = this.getSlotForPiece(t.edgePiece, false, livePattern);
 
       const slotsToExtractFrom = new Set<string>();
       if (cornerLocation !== 'U') slotsToExtractFrom.add(cornerLocation);
@@ -731,7 +733,7 @@ export class CaseMatcher {
               if (entry.slot !== slot) continue;
               const res = patternToTest.applyAlg(parseAlgSafely(entry.alg));
 
-              if (this.isSlotSolved(res, slot)) {
+              if (isSlotSolvedShared(res, slot as F2LSlot) && preservesProgress(livePattern, res)) {
                 const extractMoves = Array.from(extractAlgObj.experimentalLeafMoves()).map((m) => m.toString());
                 const entryAlgObj = parseAlgSafely(entry.alg);
                 const entryMoves = Array.from(entryAlgObj.experimentalLeafMoves()).map((m) => m.toString());
@@ -780,44 +782,14 @@ export class CaseMatcher {
   }
 
   private getSlotForPiece(piece: number, isCorner: boolean, pattern: KPattern): string | 'U' {
-    if (isCorner) {
-      const cSlot = pattern.patternData.CORNERS.pieces.indexOf(piece);
-      if (cSlot >= 0 && cSlot <= 3) return 'U';
-      if (cSlot === 4) return 'FR';
-      if (cSlot === 5) return 'FL';
-      if (cSlot === 6) return 'BL';
-      if (cSlot === 7) return 'BR';
-    } else {
-      const eSlot = pattern.patternData.EDGES.pieces.indexOf(piece);
-      if (eSlot >= 0 && eSlot <= 3) return 'U';
-      if (eSlot === 8) return 'FR';
-      if (eSlot === 9) return 'FL';
-      if (eSlot === 10) return 'BL';
-      if (eSlot === 11) return 'BR';
+    const arr = isCorner ? pattern.patternData.CORNERS.pieces : pattern.patternData.EDGES.pieces;
+    const at = arr.indexOf(piece);
+    if (at >= 0 && at <= 3) return 'U';
+    for (const slot of ['FR', 'FL', 'BR', 'BL'] as F2LSlot[]) {
+      const t = F2L_SLOT_TARGETS[slot];
+      if (at === (isCorner ? t.cornerSlot : t.edgeSlot)) return slot;
     }
     return 'U';
-  }
-
-  private isSlotSolved(pattern: KPattern, slotId: string): boolean {
-    const edges = pattern.patternData.EDGES;
-    const corners = pattern.patternData.CORNERS;
-
-    const targets: Record<string, { cSlot: number; cPiece: number; eSlot: number; ePiece: number }> = {
-      FR: { cSlot: 4, cPiece: 3, eSlot: 8, ePiece: 9 },
-      FL: { cSlot: 5, cPiece: 0, eSlot: 9, ePiece: 8 },
-      BL: { cSlot: 6, cPiece: 1, eSlot: 10, ePiece: 11 },
-      BR: { cSlot: 7, cPiece: 2, eSlot: 11, ePiece: 10 },
-    };
-
-    const t = targets[slotId];
-    if (!t) return false;
-
-    return (
-      corners.pieces[t.cSlot] === t.cPiece &&
-      corners.orientation[t.cSlot] === 0 &&
-      edges.pieces[t.eSlot] === t.ePiece &&
-      edges.orientation[t.eSlot] === 0
-    );
   }
 
 }

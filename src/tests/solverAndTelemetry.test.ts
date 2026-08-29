@@ -42,6 +42,38 @@ describe('Cross BFS Solver', () => {
     const solvedAfter = pattern.applyAlg(new Alg(solution.join(' ')));
     expect(solveCrossBFS(solvedAfter, 4)).toEqual([]);
   });
+
+  it('depth-10 search solves the cross for essentially every scramble, quickly', () => {
+    // deterministic pseudo-random scrambles
+    let seed = 12345;
+    const rand = () => {
+      seed = (seed * 1664525 + 1013904223) >>> 0;
+      return seed / 0x100000000;
+    };
+    const faces = ['U', 'D', 'L', 'R', 'F', 'B'];
+    const suff = ['', "'", '2'];
+    let misses = 0;
+    const start = Date.now();
+    for (let i = 0; i < 40; i++) {
+      let last = '';
+      const mv: string[] = [];
+      for (let j = 0; j < 22; j++) {
+        let f = faces[Math.floor(rand() * 6)];
+        while (f === last) f = faces[Math.floor(rand() * 6)];
+        last = f;
+        mv.push(f + suff[Math.floor(rand() * 3)]);
+      }
+      const pattern = getPostZ2Pattern().applyAlg(new Alg(mv.join(' ')));
+      const sol = solveCrossBFS(pattern, 10);
+      if (sol.length === 0) {
+        misses++;
+        continue;
+      }
+      expect(solveCrossBFS(pattern.applyAlg(new Alg(sol.join(' '))), 4)).toEqual([]);
+    }
+    expect(misses).toBeLessThanOrEqual(1);
+    expect(Date.now() - start).toBeLessThan(15000);
+  });
 });
 
 

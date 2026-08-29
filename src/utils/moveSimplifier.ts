@@ -18,28 +18,33 @@ interface MoveToken {
   face: string;
   amount: number; // 1 = 90° CW, 2 = 180°, 3 = 90° CCW (-1)
   originalStr: string;
+  mergeable?: boolean;
 }
 
-function parseMoveToken(moveStr: string): MoveToken | null {
+// Single-face outer turns that are safe to merge AND commute across an opposite
+// face. Everything else (wide moves, slices, whole-cube rotations, anything
+// unrecognised) is parsed just enough to cancel a literal repeat, but is never
+// treated as commuting — it acts as an opaque barrier in the sequence.
+const MERGEABLE_FACE = /^([UDFBLR])('2|2'|2|')?$/;
+const ANY_TOKEN = /^([a-zA-Z]+)('2|2'|2|')?$/;
+
+function parseMoveToken(moveStr: string): (MoveToken & { mergeable: boolean }) | null {
   const trimmed = moveStr.trim();
   if (!trimmed) return null;
 
-  const match = trimmed.match(/^([UDFBLRudfblrMSE])('?2|2'?|')?$/);
+  const strict = trimmed.match(MERGEABLE_FACE);
+  const match = strict || trimmed.match(ANY_TOKEN);
   if (!match) {
-    return { face: trimmed, amount: 1, originalStr: trimmed };
+    return { face: trimmed, amount: 1, originalStr: trimmed, mergeable: false };
   }
 
   const face = match[1];
   const suffix = match[2] || '';
-
   let amount = 1;
-  if (suffix === '2' || suffix === "'2" || suffix === "2'") {
-    amount = 2;
-  } else if (suffix === "'") {
-    amount = 3; // 3 === -1 mod 4
-  }
+  if (suffix === '2' || suffix === "'2" || suffix === "2'") amount = 2;
+  else if (suffix === "'") amount = 3; // 3 === -1 mod 4
 
-  return { face, amount, originalStr: trimmed };
+  return { face, amount, originalStr: trimmed, mergeable: Boolean(strict) };
 }
 
 function formatMoveToken(face: string, amount: number): string | null {
@@ -72,7 +77,8 @@ export function simplifyMoveSequence(moves: string[]): string[] {
 
     let merged = false;
 
-    // Case 1: Merge directly with top of stack
+    // Case 1: Merge directly with top of stack (any same-face pair, including
+    // rotations/wides — `y y'` -> [], `y y` -> `y2`).
     if (stack.length > 0 && stack[stack.length - 1].face === token.face) {
       const top = stack.pop()!;
       const newAmount = (top.amount + token.amount) % 4;
@@ -81,15 +87,21 @@ export function simplifyMoveSequence(moves: string[]): string[] {
           face: token.face,
           amount: newAmount,
           originalStr: formatMoveToken(token.face, newAmount)!,
+          mergeable: token.mergeable,
         });
       }
       merged = true;
       continue;
     }
 
-    // Case 2: Commute across opposite face (e.g. U then D then U')
+    // Case 2: Commute across opposite face (e.g. U then D then U') — only for
+    // plain outer turns; a rotation/wide/slice in any of the three slots blocks
+    // it and acts as an opaque barrier.
     if (
       stack.length >= 2 &&
+      token.mergeable &&
+      stack[stack.length - 1].mergeable &&
+      stack[stack.length - 2].mergeable &&
       OPPOSITE_FACES[stack[stack.length - 1].face] === token.face &&
       stack[stack.length - 2].face === token.face
     ) {
@@ -102,6 +114,7 @@ export function simplifyMoveSequence(moves: string[]): string[] {
           face: token.face,
           amount: newAmount,
           originalStr: formatMoveToken(token.face, newAmount)!,
+          mergeable: true,
         });
       }
       // Put middle back
