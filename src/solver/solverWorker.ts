@@ -4,6 +4,7 @@ import type { KPuzzle, KPattern } from 'cubing/kpuzzle';
 import { CaseMatcher } from './caseMatcher';
 import { solveCrossBFS } from './crossBfs';
 import { findHint } from './findHint';
+import { reconstructAlgForPattern } from './fullSolveFallback';
 import type { SolverWorkerRequest, SolverWorkerResponse } from '../types/solver';
 
 
@@ -89,7 +90,12 @@ self.onmessage = async (e: MessageEvent<SolverWorkerRequest>) => {
         break;
       }
 
-
+      case 'RECONSTRUCT_ALG': {
+        const pattern = new (kp.defaultPattern().constructor as any)(kp, req.patternData) as KPattern;
+        const alg = await reconstructAlgForPattern(pattern);
+        self.postMessage({ type: 'ALG_RECONSTRUCTED', alg } satisfies SolverWorkerResponse);
+        break;
+      }
 
 
       default:

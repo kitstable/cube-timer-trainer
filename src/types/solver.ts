@@ -31,7 +31,8 @@ export type SolverWorkerRequest =
       notationMode?: NotationMode;
       tier?: any;
       method?: any;
-    };
+    }
+  | { type: 'RECONSTRUCT_ALG'; patternData: any };
 
 
 
@@ -48,4 +49,5 @@ export type SolverWorkerResponse =
       subset?: string;
       targetSlot?: string;
     }
+  | { type: 'ALG_RECONSTRUCTED'; alg: string }
   | { type: 'ERROR'; message: string };

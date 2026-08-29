@@ -23,7 +23,7 @@ export const TimedSolveView: React.FC = () => {
     handleHoldRelease,
   } = useTimer();
 
-  const { monotonicPhase, smartCube, moveHistory, phaseStatus } = useCubeStore();
+  const { monotonicPhase, smartCube, moveHistory, phaseStatus, visualAlg } = useCubeStore();
   const { currentProfileId, currentScramble, setMode } = useAppStore();
   const [stats, setStats] = useState<SessionStats | null>(null);
 
@@ -32,7 +32,13 @@ export const TimedSolveView: React.FC = () => {
     return moveHistory.map((m) => m.move).join(' ');
   }, [moveHistory]);
 
-  const setupAlg = currentScramble || '';
+  // While a smart cube is connected, `visualAlg` mirrors the cube's true live physical
+  // state (reconstructed from its own reads, not from whatever scramble the app happens
+  // to remember) — use it directly instead of composing setup+moveHistory, which breaks
+  // as soon as the cube was connected mid-solve with no known scramble string on file.
+  const usePhysicalVisual = smartCube.isConnected && visualAlg.length > 0;
+  const setupAlg = usePhysicalVisual ? '' : (currentScramble || '');
+  const displayAlg = usePhysicalVisual ? visualAlg : solveMovesAlg;
 
   // Load session stats
   const loadStats = async () => {
@@ -124,7 +130,7 @@ export const TimedSolveView: React.FC = () => {
       <div className="bg-[var(--surface)] border border-[var(--border)] rounded-2xl p-2 mb-2 flex items-center justify-center min-h-[190px] relative">
         <TwistyPlayerWrapper
           setupAlg={setupAlg}
-          alg={solveMovesAlg}
+          alg={displayAlg}
           tempoScale={3}
           height={180}
         />

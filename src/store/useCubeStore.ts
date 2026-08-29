@@ -18,6 +18,17 @@ interface CubeStoreState {
   solvedSlots: F2LSlotId[];
   smartCube: SmartCubeState;
 
+  /**
+   * An alg that reconstructs the live `pattern` from a solved cube, in `pattern`'s own
+   * move-letter frame. Unlike `moveHistory` (which resets at the start of each solve for
+   * per-solve telemetry), this keeps growing for as long as a smart cube stays connected,
+   * so it always mirrors the cube's true physical state for 3D visualization — including
+   * right after connecting to a cube that's already mid-solve, when there's no separately
+   * known "scramble string" to fall back on. Empty means "no live physical reconstruction
+   * available" (no cube connected, or its protocol can't report state).
+   */
+  visualAlg: string;
+
   // Actions
   init: () => Promise<void>;
   applyMove: (move: string, timestamp?: number) => void;
@@ -28,6 +39,7 @@ interface CubeStoreState {
   setScramble: (scrambleStr: string) => Promise<void>;
   setSmartCubeState: (state: Partial<SmartCubeState>) => void;
   resetSolveTracking: () => void;
+  setVisualAlg: (alg: string) => void;
 }
 
 
@@ -52,6 +64,7 @@ export const useCubeStore = create<CubeStoreState>((set, get) => ({
   phaseStatus: DEFAULT_PHASE_STATUS,
   monotonicPhase: 'cross',
   solvedSlots: [],
+  visualAlg: '',
   smartCube: {
     isConnected: false,
     isConnecting: false,
@@ -87,6 +100,9 @@ export const useCubeStore = create<CubeStoreState>((set, get) => ({
         lastMove: null,
         lastMoveTimestamp: 0,
         moveHistory: [],
+        // Cleared here (before the async reconstruction lands) so the visualizer never
+        // shows a stale alg left over from a previous connection.
+        visualAlg: '',
       });
     } catch (err) {
       console.warn('Failed to sync physical pattern:', err);
@@ -94,7 +110,7 @@ export const useCubeStore = create<CubeStoreState>((set, get) => ({
   },
 
   applyMove: (move: string, timestamp: number = Date.now()) => {
-    const { pattern, monotonicPhase, solvedSlots, moveHistory } = get();
+    const { pattern, monotonicPhase, solvedSlots, moveHistory, visualAlg } = get();
     if (!pattern) return;
 
     try {
@@ -121,6 +137,7 @@ export const useCubeStore = create<CubeStoreState>((set, get) => ({
         phaseStatus: nextStatus,
         monotonicPhase: resolved.phase,
         solvedSlots: resolved.solvedSlots,
+        visualAlg: visualAlg ? `${visualAlg} ${move}` : move,
       });
     } catch (err) {
       console.warn(`Failed to apply move '${move}' to store pattern:`, err);
@@ -160,6 +177,9 @@ export const useCubeStore = create<CubeStoreState>((set, get) => ({
         solvedSlots = nextStatus.solvedSlots;
       }
 
+      const visualAlgTokens = get().visualAlg.split(/\s+/).filter(Boolean);
+      visualAlgTokens.pop();
+
       set({
         pattern: prevPattern,
         lastMove: newHistory.length > 0 ? newHistory[newHistory.length - 1].move : null,
@@ -168,6 +188,7 @@ export const useCubeStore = create<CubeStoreState>((set, get) => ({
         phaseStatus: nextStatus,
         monotonicPhase,
         solvedSlots,
+        visualAlg: visualAlgTokens.join(' '),
       });
     } catch (err) {
       console.warn('Failed to undo last move in store:', err);
@@ -193,6 +214,7 @@ export const useCubeStore = create<CubeStoreState>((set, get) => ({
         phaseStatus: status,
         monotonicPhase: 'solved',
         solvedSlots: ['FR', 'FL', 'BR', 'BL'],
+        visualAlg: '',
       });
     } catch (err) {
       console.warn('Failed to reset store to solved state:', err);
@@ -214,6 +236,9 @@ export const useCubeStore = create<CubeStoreState>((set, get) => ({
       phaseStatus: status,
       monotonicPhase: 'cross',
       solvedSlots: [],
+      // This is a known, app-generated scramble string (used directly as the
+      // visualizer's setup elsewhere) — not a live physical reconstruction.
+      visualAlg: '',
     });
   },
 
@@ -225,6 +250,8 @@ export const useCubeStore = create<CubeStoreState>((set, get) => ({
       },
     }));
   },
+
+  setVisualAlg: (alg: string) => set({ visualAlg: alg }),
 
   resetSolveTracking: () => {
     const { pattern } = get();

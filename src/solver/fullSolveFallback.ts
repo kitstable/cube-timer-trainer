@@ -68,3 +68,23 @@ export async function solvePhasePrefix(
   return simplifyMoveSequence(prefix);
 }
 
+/**
+ * Computes an alg that reconstructs `pattern` from a solved cube, expressed in
+ * `pattern`'s own (unrotated) move-letter frame.
+ *
+ * Used for 3D visualization when the app only has a live physical KPattern (e.g. read
+ * directly off a smart cube) and no known scramble string that produced it — solving the
+ * pattern gives a sequence that reaches solved, so its inverse (reversed and each move
+ * inverted) reaches `pattern` starting from solved.
+ */
+export async function reconstructAlgForPattern(pattern: KPattern): Promise<string> {
+  const solution = await experimentalSolve3x3x3IgnoringCenters(pattern.applyAlg(new Alg('z2')));
+  const movesToSolve = Array.from(solution.experimentalLeafMoves()).map((m) => {
+    const s = m.toString();
+    return (Z2_RELABEL[s[0]] ?? s[0]) + s.slice(1);
+  });
+
+  if (movesToSolve.length === 0) return '';
+  return new Alg(movesToSolve.join(' ')).invert().toString();
+}
+

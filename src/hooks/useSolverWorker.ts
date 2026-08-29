@@ -47,6 +47,12 @@ function getSharedWorker(): Worker {
           cb.resolve(res);
           pendingRequests.delete('HINT');
         }
+      } else if (res.type === 'ALG_RECONSTRUCTED') {
+        const cb = pendingRequests.get('RECONSTRUCT');
+        if (cb) {
+          cb.resolve(res.alg);
+          pendingRequests.delete('RECONSTRUCT');
+        }
       } else if (res.type === 'ERROR') {
         console.error('Solver worker error:', res.message);
         for (const [key, cb] of pendingRequests.entries()) {
@@ -132,11 +138,20 @@ export function useSolverWorker() {
 
 
 
+  const reconstructAlg = useCallback((patternData: any): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const worker = getSharedWorker();
+      pendingRequests.set('RECONSTRUCT', { resolve, reject });
+      worker.postMessage({ type: 'RECONSTRUCT_ALG', patternData } satisfies SolverWorkerRequest);
+    });
+  }, []);
+
   return {
     isReady,
     generateScramble,
     solveCross,
     findHint,
+    reconstructAlg,
   };
 }
 

@@ -2,6 +2,7 @@ import { useCallback } from 'react';
 import { connectSmartPuzzle } from 'cubing/bluetooth';
 import { useCubeStore } from '../store/useCubeStore';
 import { useAppStore } from '../store/useAppStore';
+import { useSolverWorker } from './useSolverWorker';
 import { isPatternSolved } from '../utils/kpuzzleHelper';
 import type { AppMode, SmartCubeState } from '../types/cube';
 
@@ -23,13 +24,16 @@ export async function syncPatternAndRoute(
     syncPhysicalPattern: (pattern: any) => void;
     setSmartCubeState: (state: Partial<SmartCubeState>) => void;
     setMode: (mode: AppMode) => void;
+    setVisualAlg: (alg: string) => void;
+    reconstructAlg: (patternData: any) => Promise<string>;
   }
 ): Promise<void> {
-  const { syncPhysicalPattern, setSmartCubeState, setMode } = deps;
+  const { syncPhysicalPattern, setSmartCubeState, setMode, setVisualAlg, reconstructAlg } = deps;
 
   if (typeof puzzle.getPattern !== 'function') {
     console.warn('Smart cube: this protocol does not support getPattern() — physical state is unknown.');
     setSmartCubeState({ stateReadSupported: false });
+    setVisualAlg('');
     return;
   }
 
@@ -38,6 +42,7 @@ export async function syncPatternAndRoute(
     if (!pattern) {
       console.warn('Smart cube: getPattern() returned nothing — physical state is unknown.');
       setSmartCubeState({ stateReadSupported: false });
+      setVisualAlg('');
       return;
     }
 
@@ -48,15 +53,31 @@ export async function syncPatternAndRoute(
     const mode: AppMode = solved ? 'scramble' : 'timed';
     console.info(`Smart cube: state read OK (solved=${solved}) — routing to '${mode}'.`);
     setMode(mode);
+
+    // Best-effort: reconstruct an alg reaching this pattern from solved, purely so the 3D
+    // visualizer can mirror the cube's real physical state (e.g. mid-solve on connect).
+    // Non-fatal if it fails — the visualizer just falls back to a plain solved cube.
+    if (solved) {
+      setVisualAlg('');
+    } else {
+      try {
+        const alg = await reconstructAlg(pattern.patternData);
+        setVisualAlg(alg);
+      } catch (reconErr) {
+        console.warn('Smart cube: failed to reconstruct visualization alg:', reconErr);
+      }
+    }
   } catch (err) {
     console.warn('Smart cube: getPattern() failed — physical state is unknown.', err);
     setSmartCubeState({ stateReadSupported: false });
+    setVisualAlg('');
   }
 }
 
 export function useSmartCube() {
-  const { applyMove, setSmartCubeState, syncPhysicalPattern } = useCubeStore();
+  const { applyMove, setSmartCubeState, syncPhysicalPattern, setVisualAlg } = useCubeStore();
   const { setMode, advanceScrambleProgress } = useAppStore();
+  const { reconstructAlg } = useSolverWorker();
 
   const connect = useCallback(async () => {
     setSmartCubeState({ isConnecting: true, error: null });
@@ -86,7 +107,7 @@ export function useSmartCube() {
       });
 
       // 1. Sync physical pattern from smart cube if supported, and auto-route accordingly
-      await syncPatternAndRoute(puzzle, { syncPhysicalPattern, setSmartCubeState, setMode });
+      await syncPatternAndRoute(puzzle, { syncPhysicalPattern, setSmartCubeState, setMode, setVisualAlg, reconstructAlg });
 
       // 2. Listen for live turns from smart cube
       puzzle.addAlgLeafListener((leafEvent: any) => {
@@ -139,7 +160,7 @@ export function useSmartCube() {
         stateReadSupported: true,
       });
     }
-  }, [applyMove, setSmartCubeState, syncPhysicalPattern, setMode, advanceScrambleProgress]);
+  }, [applyMove, setSmartCubeState, syncPhysicalPattern, setMode, advanceScrambleProgress, setVisualAlg, reconstructAlg]);
 
   const disconnect = useCallback(() => {
     if (activeSmartPuzzle) {
@@ -169,8 +190,8 @@ export function useSmartCube() {
 
   const resyncFromCube = useCallback(async () => {
     if (!activeSmartPuzzle) return;
-    await syncPatternAndRoute(activeSmartPuzzle, { syncPhysicalPattern, setSmartCubeState, setMode });
-  }, [syncPhysicalPattern, setSmartCubeState, setMode]);
+    await syncPatternAndRoute(activeSmartPuzzle, { syncPhysicalPattern, setSmartCubeState, setMode, setVisualAlg, reconstructAlg });
+  }, [syncPhysicalPattern, setSmartCubeState, setMode, setVisualAlg, reconstructAlg]);
 
   return {
     connect,
