@@ -52,11 +52,24 @@ export const ConnectionModal: React.FC<ConnectionModalProps> = ({ isOpen, onClos
               </div>
             </div>
 
+            {!smartCube.stateReadSupported && (
+              <div className="p-3 rounded-xl bg-[var(--yellow)]/10 border border-[var(--yellow)]/30 text-xs text-[var(--text)] flex items-start gap-2">
+                <AlertCircle className="w-4 h-4 shrink-0 mt-0.5 text-[var(--yellow)]" />
+                <span>
+                  This cube doesn't report its physical state automatically, so the app can't
+                  tell what's on it yet. Solve it, then tap <strong>Calibrate Solved</strong> below
+                  — or just start turning it to begin a timed solve.
+                </span>
+              </div>
+            )}
+
             <div className="flex gap-2">
               <button
                 onClick={async () => {
                   await resyncFromCube();
-                  onClose();
+                  if (useCubeStore.getState().smartCube.stateReadSupported) {
+                    onClose();
+                  }
                 }}
                 className="flex-1 py-2.5 rounded-xl font-heading font-medium text-xs bg-[var(--surface-2)] border border-[var(--border)] text-[var(--text)] hover:bg-[var(--border)] transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
               >
@@ -67,6 +80,7 @@ export const ConnectionModal: React.FC<ConnectionModalProps> = ({ isOpen, onClos
               <button
                 onClick={() => {
                   useCubeStore.getState().resetToSolved();
+                  useCubeStore.getState().setSmartCubeState({ stateReadSupported: true });
                   useAppStore.getState().setMode('scramble');
                   onClose();
                 }}
@@ -104,7 +118,8 @@ export const ConnectionModal: React.FC<ConnectionModalProps> = ({ isOpen, onClos
             <button
               onClick={async () => {
                 await connect();
-                if (!useCubeStore.getState().smartCube.error) {
+                const state = useCubeStore.getState().smartCube;
+                if (!state.error && state.stateReadSupported) {
                   onClose();
                 }
               }}

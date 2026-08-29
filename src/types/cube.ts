@@ -46,6 +46,8 @@ export interface SmartCubeState {
   deviceName: string | null;
   batteryLevel: number | null;
   error: string | null;
+  /** false = this cube/protocol can't report its physical state; the user must calibrate manually. */
+  stateReadSupported: boolean;
 }
 
 export interface MoveHint {

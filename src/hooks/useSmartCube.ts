@@ -3,9 +3,56 @@ import { connectSmartPuzzle } from 'cubing/bluetooth';
 import { useCubeStore } from '../store/useCubeStore';
 import { useAppStore } from '../store/useAppStore';
 import { isPatternSolved } from '../utils/kpuzzleHelper';
+import type { AppMode, SmartCubeState } from '../types/cube';
 
 // Module-level singleton keeps the Bluetooth connection active across modal opens/closes
 let activeSmartPuzzle: any = null;
+
+/**
+ * Reads the physical cube's pattern from the puzzle (when the protocol supports it) and,
+ * on success, syncs the store and auto-routes: solved -> Scramble, unsolved -> Timed.
+ *
+ * Deliberately never guesses a mode from stale/default app state. When the puzzle can't
+ * report its pattern (unsupported protocol, or a failed/empty read), it only flags
+ * `stateReadSupported: false` and leaves `activeMode` untouched, so the UI can point the
+ * user at manual calibration instead of silently pretending to have detected something.
+ */
+export async function syncPatternAndRoute(
+  puzzle: any,
+  deps: {
+    syncPhysicalPattern: (pattern: any) => void;
+    setSmartCubeState: (state: Partial<SmartCubeState>) => void;
+    setMode: (mode: AppMode) => void;
+  }
+): Promise<void> {
+  const { syncPhysicalPattern, setSmartCubeState, setMode } = deps;
+
+  if (typeof puzzle.getPattern !== 'function') {
+    console.warn('Smart cube: this protocol does not support getPattern() — physical state is unknown.');
+    setSmartCubeState({ stateReadSupported: false });
+    return;
+  }
+
+  try {
+    const pattern = await puzzle.getPattern();
+    if (!pattern) {
+      console.warn('Smart cube: getPattern() returned nothing — physical state is unknown.');
+      setSmartCubeState({ stateReadSupported: false });
+      return;
+    }
+
+    syncPhysicalPattern(pattern);
+    setSmartCubeState({ stateReadSupported: true });
+
+    const solved = isPatternSolved(pattern);
+    const mode: AppMode = solved ? 'scramble' : 'timed';
+    console.info(`Smart cube: state read OK (solved=${solved}) — routing to '${mode}'.`);
+    setMode(mode);
+  } catch (err) {
+    console.warn('Smart cube: getPattern() failed — physical state is unknown.', err);
+    setSmartCubeState({ stateReadSupported: false });
+  }
+}
 
 export function useSmartCube() {
   const { applyMove, setSmartCubeState, syncPhysicalPattern } = useCubeStore();
@@ -38,38 +85,8 @@ export function useSmartCube() {
         error: null,
       });
 
-      // 1. Sync physical pattern from smart cube if supported
-      try {
-        let initialPattern = null;
-        if (typeof puzzle.getPattern === 'function') {
-          try {
-            initialPattern = await puzzle.getPattern();
-          } catch (getPatErr) {
-            console.warn('Physical cube getPattern() failed or unsupported:', getPatErr);
-          }
-        }
-
-        if (initialPattern) {
-          syncPhysicalPattern(initialPattern);
-          const solved = isPatternSolved(initialPattern);
-          if (solved) {
-            setMode('scramble');
-          } else {
-            setMode('timed');
-          }
-        } else {
-          // If getPattern is not supported (e.g. GoCube), check store pattern or default to scramble
-          const cur = useCubeStore.getState().pattern;
-          if (cur && !isPatternSolved(cur)) {
-            setMode('timed');
-          } else {
-            setMode('scramble');
-          }
-        }
-      } catch (patternErr) {
-        console.warn('Physical cube initial sync failed:', patternErr);
-        setMode('scramble');
-      }
+      // 1. Sync physical pattern from smart cube if supported, and auto-route accordingly
+      await syncPatternAndRoute(puzzle, { syncPhysicalPattern, setSmartCubeState, setMode });
 
       // 2. Listen for live turns from smart cube
       puzzle.addAlgLeafListener((leafEvent: any) => {
@@ -108,6 +125,7 @@ export function useSmartCube() {
             deviceName: null,
             batteryLevel: null,
             error: null,
+            stateReadSupported: true,
           });
         });
       }
@@ -118,6 +136,7 @@ export function useSmartCube() {
         isConnected: false,
         isConnecting: false,
         error: err?.message || 'Connection cancelled or failed',
+        stateReadSupported: true,
       });
     }
   }, [applyMove, setSmartCubeState, syncPhysicalPattern, setMode, advanceScrambleProgress]);
@@ -144,28 +163,14 @@ export function useSmartCube() {
       deviceName: null,
       batteryLevel: null,
       error: null,
+      stateReadSupported: true,
     });
   }, [setSmartCubeState]);
 
   const resyncFromCube = useCallback(async () => {
     if (!activeSmartPuzzle) return;
-    try {
-      if (typeof activeSmartPuzzle.getPattern === 'function') {
-        const p = await activeSmartPuzzle.getPattern();
-        if (p) {
-          syncPhysicalPattern(p);
-          const solved = isPatternSolved(p);
-          if (solved) {
-            setMode('scramble');
-          } else {
-            setMode('timed');
-          }
-        }
-      }
-    } catch (err) {
-      console.warn('Failed to resync pattern from physical cube:', err);
-    }
-  }, [syncPhysicalPattern, setMode]);
+    await syncPatternAndRoute(activeSmartPuzzle, { syncPhysicalPattern, setSmartCubeState, setMode });
+  }, [syncPhysicalPattern, setSmartCubeState, setMode]);
 
   return {
     connect,
@@ -174,4 +179,3 @@ export function useSmartCube() {
     hasActiveConnection: () => Boolean(activeSmartPuzzle),
   };
 }
-

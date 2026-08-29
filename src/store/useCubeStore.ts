@@ -58,6 +58,7 @@ export const useCubeStore = create<CubeStoreState>((set, get) => ({
     deviceName: null,
     batteryLevel: null,
     error: null,
+    stateReadSupported: true,
   },
 
   init: async () => {
