@@ -166,7 +166,7 @@ Both are on `claude/smart-cube-connection-state-rs2s9a`.
    flash the amber "partial" cue for the tens of ms until the second landed.
    `src/utils/scramblePartialGate.ts` (pure, dependency-injected) now sits between the BLE
    event and `applyPhysicalScrambleMove` in `useSmartCube.ts`: a turn that classifies
-   `partial` is *held* for `SCRAMBLE_PARTIAL_GRACE_MS` (400ms); a second turn in that window
+   `partial` is *held* for `SCRAMBLE_PARTIAL_GRACE_MS` (800ms); a second turn in that window
    commits the held one and processes the new one (a real double turn resolves to `progress`
    with no amber frame), and the timer firing commits it (genuine mid-face stop → cue
    shows). `applyMove`/`visualAlg` stay immediate — only the guide lags. `progress` /
@@ -257,7 +257,18 @@ way:
    render, so the move blob should live in a **separate Dexie table** keyed by solve id
    (`db.version(2)`, additive — no data migration), fetched only when a solve detail view
    opens. Populated for smart-cube solves only.
-7. **Some duplicated/vestigial pieces from incremental work:**
+8. **Timed Solve 3D view is white-up; a "yellow face up" option is wanted (roadmap).**
+   Deliberately deferred. `<twisty-player>` has no view-orientation prop and no camera angle
+   shows yellow as a readable top face — it needs a true cube reorientation: prepend `z2` to
+   the displayed setup **and** transform every move letter handed to the visualizer
+   (`U↔D`, `L↔R`, `M↔M'`, `x↔x'`, `y↔y'`, slices, wides — `visualAlg` can contain rotations,
+   see `reconstructAlgForPattern`). That move-relabel is the exact "translate every face into
+   a new position" class of change that caused silent bugs before, so it must stay a pure
+   `relabelForDisplay(alg)` helper used **only** in `TimedSolveView`'s render — never near the
+   store, phase detection, solver, or persistence — with a unit test against a known scramble
+   (per the z2 gotcha rule above). ~25 lines + test + one wiring point; contained but not
+   free. Do it as its own change, not bundled with anything else.
+9. **Some duplicated/vestigial pieces from incremental work:**
    - `src/components/ui/MoveRibbon.tsx` is unused — `GuidedSolveView` and `ScrambleView`
      each hand-roll their own near-identical move-chip ribbon inline instead.
    - `ALL_F2L_SLOTS` is defined twice (`src/utils/constants.ts` and

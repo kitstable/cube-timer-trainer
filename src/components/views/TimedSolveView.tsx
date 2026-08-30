@@ -2,6 +2,7 @@ import React, { useEffect, useState, useMemo } from 'react';
 import { Play, Square, RotateCcw } from 'lucide-react';
 import { TwistyPlayerWrapper } from '../TwistyPlayerWrapper';
 import { useTimer } from '../../hooks/useTimer';
+import { useSolverWorker } from '../../hooks/useSolverWorker';
 import { useCubeStore } from '../../store/useCubeStore';
 import { useAppStore } from '../../store/useAppStore';
 import { formatTime } from '../../utils/telemetryCalculator';
@@ -24,11 +25,13 @@ export const TimedSolveView: React.FC = () => {
     handleHoldRelease,
   } = useTimer();
 
-  const { monotonicPhase: rawMonotonicPhase, smartCube, moveHistory, phaseStatus, visualAlg, solveTracker, lastMoveTimestamp } = useCubeStore();
+  const { monotonicPhase: rawMonotonicPhase, smartCube, moveHistory, phaseStatus, visualAlg, solveTracker, lastMoveTimestamp, setScramble: setCubeStoreScramble } = useCubeStore();
   // During a connected solve the dedicated CFOP tracker holds the correct live phase.
   const monotonicPhase = solveTracker.active ? solveTracker.monotonicPhase : rawMonotonicPhase;
-  const { currentProfileId, currentScramble, setMode } = useAppStore();
+  const { currentProfileId, currentScramble, setMode, setScramble } = useAppStore();
+  const { generateScramble } = useSolverWorker();
   const [stats, setStats] = useState<SessionStats | null>(null);
+  const [isPreparingScramble, setIsPreparingScramble] = useState(false);
 
   // Moves made during this solve
   const solveMovesAlg = useMemo(() => {
@@ -90,6 +93,28 @@ export const TimedSolveView: React.FC = () => {
   const backToScramble =
     timerState === 'completed' &&
     (Boolean(lastCompletedSolve?.cubeConnected) || phaseStatus.isFullySolved);
+
+  // "Next Scramble": generate a fresh WCA scramble, seed both stores, then jump to the
+  // Scramble tab. Without regenerating here, ScrambleView mounts still holding the just-
+  // solved scramble (already marked complete) and never produces a new one.
+  const handleCompletedCta = async () => {
+    if (!backToScramble) {
+      resetTimer();
+      return;
+    }
+    setIsPreparingScramble(true);
+    try {
+      const res = await generateScramble();
+      setScramble(res.scramble, res.moves);
+      await setCubeStoreScramble(res.scramble);
+    } catch (err) {
+      console.error('Failed to generate next scramble:', err);
+    } finally {
+      setIsPreparingScramble(false);
+      resetTimer();
+      setMode('scramble');
+    }
+  };
 
   // Determine timer text color / status
   let phaseStatusLabel = 'Ready';
@@ -229,15 +254,19 @@ export const TimedSolveView: React.FC = () => {
           <button
             onClick={(e) => {
               e.stopPropagation();
-              resetTimer();
-              if (backToScramble) {
-                setMode('scramble');
-              }
+              if (!isPreparingScramble) handleCompletedCta();
             }}
-            className="w-full py-3.5 rounded-xl font-heading font-semibold text-[15px] bg-[var(--white)] text-[var(--bg)] hover:opacity-90 active:scale-[0.99] transition-all flex items-center justify-center gap-2 cursor-pointer shadow-sm"
+            disabled={isPreparingScramble}
+            className="w-full py-3.5 rounded-xl font-heading font-semibold text-[15px] bg-[var(--white)] text-[var(--bg)] hover:opacity-90 active:scale-[0.99] transition-all flex items-center justify-center gap-2 cursor-pointer shadow-sm disabled:opacity-60"
           >
-            <RotateCcw className="w-4 h-4" />
-            <span>{backToScramble ? 'Next Scramble' : 'New Solve'}</span>
+            <RotateCcw className={`w-4 h-4 ${isPreparingScramble ? 'animate-spin' : ''}`} />
+            <span>
+              {isPreparingScramble
+                ? 'Generating…'
+                : backToScramble
+                ? 'Next Scramble'
+                : 'New Solve'}
+            </span>
           </button>
         ) : (
           <button

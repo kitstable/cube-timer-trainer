@@ -51,7 +51,7 @@ export const ALL_F2L_SLOTS: F2LSlotId[] = ['FR', 'FL', 'BR', 'BL'];
  * same-face "partial" cue. Absorbs fluid double turns (an `R2` arrives as `R` + `R`)
  * silently; a genuine mid-face stop still shows the cue after this delay.
  */
-export const SCRAMBLE_PARTIAL_GRACE_MS = 400;
+export const SCRAMBLE_PARTIAL_GRACE_MS = 800;
 
 export const CFOP_PHASE_ORDER: CFOPPhase[] = [
   'cross',
