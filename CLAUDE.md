@@ -80,6 +80,16 @@ is local. Installable PWA via `vite-plugin-pwa`.
   consistent frame. Don't be tempted to "fix" a visual mismatch by relabeling moves anywhere
   outside the solver boundary — the actual fix is almost always upstream, in what pattern/alg
   is being fed in.
+- **The one place moves ARE relabeled: `useCubeStore.solveTracker`** (connected Timed Solve
+  CFOP detection). The raw store `pattern` can't be used there — during a guided scramble it
+  becomes `default·scramble·z2·[physical scramble turns]`, a ghost that never reads as
+  cross/F2L/OLL/solved on time. The tracker is a *separate* pattern seeded from the clean
+  `default·scramble·z2` and advanced by `relabelMoveZ2(move)` (smart-cube events come in the
+  cube's calibrated/default frame; the CFOP tables are post-z2). This is deliberately walled
+  off from `pattern`/`moveHistory`/`visualAlg`. If you need "is the cube solved / what phase"
+  during a connected timed solve, read `solveTracker`, not `phaseStatus`/`monotonicPhase`.
+  The frame choice is empirically verified in `src/tests/solvePhaseTracker.test.ts` — re-run
+  it if you touch any of this.
 
 ## Recent work (this session)
 
@@ -129,21 +139,39 @@ Both are on `claude/smart-cube-connection-state-rs2s9a`.
    shows). `applyMove`/`visualAlg` stay immediate — only the guide lags. `progress` /
    `error` / `complete` are never deferred.
 
-5. **Timed Solve: no more spurious autostart, plus inspection + richer phase telemetry.**
-   - `useTimer.ts` gained a seeding effect: on entering Timed mode with a connected cube +
-     idle timer it snapshots `lastMoveTimestamp` (so finishing a scramble can't auto-start
-     the solve), starts the inspection clock (`inspectionStartRef`), and calls
-     `resetSolveTracking()`. The auto-start effect now calls `startSolve({ preserveTracking:
-     true })` so the first real turn — already in `moveHistory` — is counted.
-   - `PhaseSplit.recognitionMs` (new) = the idle gap before a phase's first recorded move
-     (between-phase thinking time), computed in `telemetryCalculator.ts`. Known imprecision:
-     monotonic phase detection credits the phase-*completing* move to the next phase, so
-     this is off by ~one quarter-turn per boundary — fine next to real ~1s+ pauses.
-   - `Solve.totalMoves` / `Solve.overallTps` (new, optional) are now persisted.
+5. **Timed Solve: no spurious autostart, real inspection, and CFOP phase detection that
+   actually works with a connected cube.**
+   - `useTimer.ts` seeding effect (entering Timed mode, connected, idle): snapshots
+     `lastMoveTimestamp` (finishing a scramble can't auto-start the solve), starts the
+     inspection clock (`inspectionStartRef`, no longer clobbered by an incidental touch —
+     it's set once on entry and cleared only on `resetTimer` / leaving Timed), calls
+     `resetSolveTracking()`, and seeds the new phase tracker (below). Auto-start uses
+     `startSolve({ preserveTracking: true })` so the first physical turn is counted.
+   - **Frame fix — `useCubeStore.solveTracker`.** The raw store `pattern` is *not* usable
+     for CFOP detection during a connected solve: in scramble mode it's the z2 scramble
+     *target* with physical scramble turns layered on (a ghost), so `isCrossSolved` /
+     `solvedSlots` / `isOLLSolved` never fire on time — "Cross" used to swallow the whole
+     solve and OLL/PLL never appeared. The dedicated `solveTracker` seeds from the clean
+     `default · scramble · z2` state (read live via `readActiveSmartCubePattern()` +
+     `z2`, or rebuilt from `currentScramble`) and advances by `relabelMoveZ2(move)` of each
+     physical turn — the one frame where phase detection tracks a real solve (verified in
+     `src/tests/solvePhaseTracker.test.ts`; empirically: cross detected within ~1 move of
+     the real cross, F2L slots caught, reaches solved). It's kept **entirely separate** from
+     `pattern` / `moveHistory` / `visualAlg`, which stay in the raw frame so guided scramble
+     and the 3D visualizer are untouched. `useTimer` reads `solveTracker` for completion
+     detection, the live phase label, and telemetry move history when it's `active`.
+   - `relabelMoveZ2` (`kpuzzleHelper.ts`) — face relabel across z2 (U↔D, L↔R). Smart-cube
+     move events are reported in the cube's calibrated/default frame; the app's CFOP tables
+     are post-z2.
+   - `PhaseSplit.recognitionMs` (new) = idle gap before a phase's first recorded move
+     (between-phase thinking time). Boundary imprecision: monotonic detection credits the
+     phase-*completing* move to the next phase, so it's off by ~one quarter-turn — fine next
+     to real ~1s+ pauses.
+   - `Solve.totalMoves` / `Solve.overallTps` (new, optional) are persisted.
    - `src/components/ui/PhaseBreakdown.tsx` (new, shared by `TimedSolveView` result panel
      and `HistoryView` detail modal) renders per-phase time / proportion% / moves / TPS, the
-     `+Xs recognition` sub-line, and an overall footer. Old solves lacking the new fields
-     just render without them.
+     `+Xs recognition` sub-line, and an overall footer. Old solves without the new fields
+     render without them.
 
 ## Where the code stands relative to the spec — open items to discuss
 

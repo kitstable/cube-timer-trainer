@@ -2,8 +2,28 @@ import { create } from 'zustand';
 import type { KPattern } from 'cubing/kpuzzle';
 import { Alg } from 'cubing/alg';
 import type { CFOPPhase, F2LSlotId, PhaseStatus, SmartCubeState, TimestampedMove } from '../types/cube';
-import { getKPuzzle, getPostZ2Pattern } from '../utils/kpuzzleHelper';
+import { getKPuzzle, getPostZ2Pattern, relabelMoveZ2 } from '../utils/kpuzzleHelper';
 import { evaluateCFOPFromPattern, resolveMonotonicCFOPPhase } from '../utils/phaseDetector';
+
+/**
+ * Dedicated CFOP phase tracker for a connected Timed Solve.
+ *
+ * The main `pattern` is kept in the raw physical move frame (so guided scramble and the 3D
+ * visualizer stay consistent — see CLAUDE.md), and during a connected solve it accumulates
+ * the physical scramble turns on top of the z2 scramble target, so it is *not* a clean
+ * representation of the cube for CFOP detection. This tracker instead seeds from the clean
+ * `default · scramble · z2` state and advances by the z2-relabel of each physical move —
+ * the one frame in which `evaluateCFOPFromPattern` reports cross / F2L / OLL / PLL / solved
+ * on time (verified in `src/tests/solvePhaseTracker.test.ts`).
+ */
+export interface SolveTrackerState {
+  active: boolean;
+  pattern: KPattern | null;
+  moveHistory: TimestampedMove[];
+  status: PhaseStatus;
+  monotonicPhase: CFOPPhase;
+  solvedSlots: F2LSlotId[];
+}
 
 interface CubeStoreState {
   isInitialized: boolean;
@@ -17,6 +37,9 @@ interface CubeStoreState {
   monotonicPhase: CFOPPhase;
   solvedSlots: F2LSlotId[];
   smartCube: SmartCubeState;
+
+  /** Connected Timed Solve CFOP tracker — see SolveTrackerState above. */
+  solveTracker: SolveTrackerState;
 
   /**
    * An alg that reconstructs the live `pattern` from a solved cube, in `pattern`'s own
@@ -40,7 +63,26 @@ interface CubeStoreState {
   setSmartCubeState: (state: Partial<SmartCubeState>) => void;
   resetSolveTracking: () => void;
   setVisualAlg: (alg: string) => void;
+  beginSolveTracking: (seed: KPattern) => void;
+  endSolveTracking: () => void;
 }
+
+const INACTIVE_SOLVE_TRACKER: SolveTrackerState = {
+  active: false,
+  pattern: null,
+  moveHistory: [],
+  status: {
+    isCrossSolved: false,
+    solvedSlots: [],
+    isF2LSolved: false,
+    isOLLSolved: false,
+    isPLLSolved: false,
+    isFullySolved: false,
+    currentPhase: 'cross',
+  },
+  monotonicPhase: 'cross',
+  solvedSlots: [],
+};
 
 
 
@@ -65,6 +107,7 @@ export const useCubeStore = create<CubeStoreState>((set, get) => ({
   monotonicPhase: 'cross',
   solvedSlots: [],
   visualAlg: '',
+  solveTracker: INACTIVE_SOLVE_TRACKER,
   smartCube: {
     isConnected: false,
     isConnecting: false,
@@ -100,6 +143,7 @@ export const useCubeStore = create<CubeStoreState>((set, get) => ({
         lastMove: null,
         lastMoveTimestamp: 0,
         moveHistory: [],
+        solveTracker: INACTIVE_SOLVE_TRACKER,
         // Cleared here (before the async reconstruction lands) so the visualizer never
         // shows a stale alg left over from a previous connection.
         visualAlg: '',
@@ -110,7 +154,7 @@ export const useCubeStore = create<CubeStoreState>((set, get) => ({
   },
 
   applyMove: (move: string, timestamp: number = Date.now()) => {
-    const { pattern, monotonicPhase, solvedSlots, moveHistory, visualAlg } = get();
+    const { pattern, monotonicPhase, solvedSlots, moveHistory, visualAlg, solveTracker } = get();
     if (!pattern) return;
 
     try {
@@ -129,6 +173,38 @@ export const useCubeStore = create<CubeStoreState>((set, get) => ({
         phase: resolved.phase,
       };
 
+      // Advance the connected-solve CFOP tracker in its own (z2-relabelled) frame — kept
+      // entirely separate from `pattern` / `visualAlg`, which stay in the raw frame.
+      let nextSolveTracker = solveTracker;
+      if (solveTracker.active && solveTracker.pattern) {
+        try {
+          const tPattern = solveTracker.pattern.applyAlg(new Alg(relabelMoveZ2(move)));
+          const tStatus = evaluateCFOPFromPattern(tPattern);
+          const tResolved = resolveMonotonicCFOPPhase(
+            solveTracker.monotonicPhase,
+            solveTracker.solvedSlots,
+            tStatus
+          );
+          const tLastTs =
+            solveTracker.moveHistory.length > 0
+              ? solveTracker.moveHistory[solveTracker.moveHistory.length - 1].timestamp
+              : timestamp;
+          nextSolveTracker = {
+            active: true,
+            pattern: tPattern,
+            moveHistory: [
+              ...solveTracker.moveHistory,
+              { move, timestamp, deltaMs: Math.max(0, timestamp - tLastTs), phase: tResolved.phase },
+            ],
+            status: tStatus,
+            monotonicPhase: tResolved.phase,
+            solvedSlots: tResolved.solvedSlots,
+          };
+        } catch (trackErr) {
+          console.warn(`Solve tracker failed to apply move '${move}':`, trackErr);
+        }
+      }
+
       set({
         pattern: nextPattern,
         lastMove: move,
@@ -138,6 +214,7 @@ export const useCubeStore = create<CubeStoreState>((set, get) => ({
         monotonicPhase: resolved.phase,
         solvedSlots: resolved.solvedSlots,
         visualAlg: visualAlg ? `${visualAlg} ${move}` : move,
+        solveTracker: nextSolveTracker,
       });
     } catch (err) {
       console.warn(`Failed to apply move '${move}' to store pattern:`, err);
@@ -215,6 +292,7 @@ export const useCubeStore = create<CubeStoreState>((set, get) => ({
         monotonicPhase: 'solved',
         solvedSlots: ['FR', 'FL', 'BR', 'BL'],
         visualAlg: '',
+        solveTracker: INACTIVE_SOLVE_TRACKER,
       });
     } catch (err) {
       console.warn('Failed to reset store to solved state:', err);
@@ -239,6 +317,7 @@ export const useCubeStore = create<CubeStoreState>((set, get) => ({
       // This is a known, app-generated scramble string (used directly as the
       // visualizer's setup elsewhere) — not a live physical reconstruction.
       visualAlg: '',
+      solveTracker: INACTIVE_SOLVE_TRACKER,
     });
   },
 
@@ -265,4 +344,25 @@ export const useCubeStore = create<CubeStoreState>((set, get) => ({
       solvedSlots: status.solvedSlots,
     });
   },
+
+  beginSolveTracking: (seed: KPattern) => {
+    try {
+      const status = evaluateCFOPFromPattern(seed);
+      set({
+        solveTracker: {
+          active: true,
+          pattern: seed,
+          moveHistory: [],
+          status,
+          monotonicPhase: status.currentPhase,
+          solvedSlots: status.solvedSlots,
+        },
+      });
+    } catch (err) {
+      console.warn('Failed to begin solve tracking:', err);
+      set({ solveTracker: INACTIVE_SOLVE_TRACKER });
+    }
+  },
+
+  endSolveTracking: () => set({ solveTracker: INACTIVE_SOLVE_TRACKER }),
 }));

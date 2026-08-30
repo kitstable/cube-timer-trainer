@@ -24,7 +24,9 @@ export const TimedSolveView: React.FC = () => {
     handleHoldRelease,
   } = useTimer();
 
-  const { monotonicPhase, smartCube, moveHistory, phaseStatus, visualAlg } = useCubeStore();
+  const { monotonicPhase: rawMonotonicPhase, smartCube, moveHistory, phaseStatus, visualAlg, solveTracker } = useCubeStore();
+  // During a connected solve the dedicated CFOP tracker holds the correct live phase.
+  const monotonicPhase = solveTracker.active ? solveTracker.monotonicPhase : rawMonotonicPhase;
   const { currentProfileId, currentScramble, setMode } = useAppStore();
   const [stats, setStats] = useState<SessionStats | null>(null);
 
@@ -82,6 +84,12 @@ export const TimedSolveView: React.FC = () => {
 
   const formattedSolveTime = formatTime(elapsedMs);
   const formattedInspection = (inspectionRemainingMs / 1000).toFixed(1);
+
+  // After a completed solve, jump back to Scramble for a fresh scramble when the cube is
+  // (or was tracked as) solved — a connected solve that finished, or a solved raw pattern.
+  const backToScramble =
+    timerState === 'completed' &&
+    (Boolean(lastCompletedSolve?.cubeConnected) || phaseStatus.isFullySolved);
 
   // Determine timer text color / status
   let phaseStatusLabel = 'Ready';
@@ -248,14 +256,14 @@ export const TimedSolveView: React.FC = () => {
             onClick={(e) => {
               e.stopPropagation();
               resetTimer();
-              if (phaseStatus.isFullySolved) {
+              if (backToScramble) {
                 setMode('scramble');
               }
             }}
             className="w-full py-3.5 rounded-xl font-heading font-semibold text-[15px] bg-[var(--white)] text-[var(--bg)] hover:opacity-90 active:scale-[0.99] transition-all flex items-center justify-center gap-2 cursor-pointer shadow-sm"
           >
             <RotateCcw className="w-4 h-4" />
-            <span>{phaseStatus.isFullySolved ? 'Next Scramble' : 'New Solve'}</span>
+            <span>{backToScramble ? 'Next Scramble' : 'New Solve'}</span>
           </button>
         ) : (
           <button

@@ -13,6 +13,20 @@ import type { AppMode, SmartCubeState } from '../types/cube';
 let activeSmartPuzzle: any = null;
 
 /**
+ * Reads the connected cube's current physical pattern, or `null` if there is no
+ * connection or the protocol can't report state. No side effects / routing — used to
+ * anchor per-solve phase tracking to the real cube.
+ */
+export async function readActiveSmartCubePattern(): Promise<any | null> {
+  if (!activeSmartPuzzle || typeof activeSmartPuzzle.getPattern !== 'function') return null;
+  try {
+    return (await activeSmartPuzzle.getPattern()) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Defers a same-face "partial" turn briefly so a fluid double turn (`R2` arriving as two
  * `R` events) doesn't flash the correction UI between its halves. Sits between the BLE
  * event and the guided-scramble tracker; `applyMove` to `useCubeStore` stays immediate.

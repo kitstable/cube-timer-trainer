@@ -1,9 +1,12 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { Alg } from 'cubing/alg';
 import confetti from 'canvas-confetti';
 import { useCubeStore } from '../store/useCubeStore';
 import { useAppStore } from '../store/useAppStore';
 import { saveSolve } from '../db/repository';
 import { calculateSolveTelemetry } from '../utils/telemetryCalculator';
+import { getDefaultPattern } from '../utils/kpuzzleHelper';
+import { readActiveSmartCubePattern } from './useSmartCube';
 import type { Solve } from '../types/db';
 import type { CFOPPhase } from '../types/cube';
 
@@ -15,8 +18,18 @@ export function useTimer() {
   const [inspectionRemainingMs, setInspectionRemainingMs] = useState(15000);
   const [lastCompletedSolve, setLastCompletedSolve] = useState<Solve | null>(null);
 
-  const { phaseStatus, monotonicPhase, smartCube, lastMove, lastMoveTimestamp, resetSolveTracking } = useCubeStore();
-  const { currentProfileId, scrambleMoves, activeMode } = useAppStore();
+  const {
+    phaseStatus,
+    monotonicPhase,
+    smartCube,
+    lastMove,
+    lastMoveTimestamp,
+    resetSolveTracking,
+    solveTracker,
+    beginSolveTracking,
+    endSolveTracking,
+  } = useCubeStore();
+  const { currentProfileId, scrambleMoves, activeMode, currentScramble } = useAppStore();
 
   const startTimestampRef = useRef<number>(0);
   const inspectionStartRef = useRef<number>(0);
@@ -30,7 +43,9 @@ export function useTimer() {
   const startInspection = useCallback(() => {
     setTimerState('inspection');
     setInspectionRemainingMs(15000);
-    inspectionStartRef.current = performance.now();
+    // Don't clobber an inspection clock already started on entering Timed mode (connected
+    // flow) — an incidental screen touch must not reset how long you've been inspecting.
+    if (inspectionStartRef.current === 0) inspectionStartRef.current = performance.now();
   }, []);
 
   const startSolve = useCallback((opts?: { preserveTracking?: boolean }) => {
@@ -60,8 +75,15 @@ export function useTimer() {
 
     const inspectionDuration = inspectionStartRef.current > 0 ? Math.round(startTimestampRef.current - inspectionStartRef.current) : 0;
 
-    const moves = useCubeStore.getState().moveHistory;
+    // Prefer the dedicated CFOP tracker's move history (correct phase labels); fall back
+    // to the raw store history for cubes/protocols where tracking couldn't be seeded.
+    const tracker = useCubeStore.getState().solveTracker;
+    const moves =
+      tracker.active && tracker.moveHistory.length > 0
+        ? tracker.moveHistory
+        : useCubeStore.getState().moveHistory;
     const isCubeConnected = smartCube.isConnected;
+    endSolveTracking();
 
     const telemetry = calculateSolveTelemetry(
       inspectionDuration,
@@ -94,24 +116,61 @@ export function useTimer() {
     } catch (err) {
       console.error('Failed to save solve record:', err);
     }
-  }, [timerState, smartCube.isConnected, currentProfileId, scrambleMoves]);
+  }, [timerState, smartCube.isConnected, currentProfileId, scrambleMoves, endSolveTracking]);
 
   const resetTimer = useCallback(() => {
     if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
     setTimerState('idle');
     setElapsedMs(0);
     setInspectionRemainingMs(15000);
+    inspectionStartRef.current = 0;
   }, []);
 
   // Entering Timed mode with a connected cube: ignore any turns made before now (e.g.
   // finishing a scramble) so the timer doesn't auto-start on stale moves, start the
-  // inspection clock, and clear solve tracking so the first real turn is counted.
+  // inspection clock, clear solve tracking so the first real turn is counted, and seed
+  // the CFOP phase tracker from the clean scramble state (see SolveTrackerState).
   useEffect(() => {
-    if (activeMode !== 'timed' || !smartCube.isConnected || timerState !== 'idle') return;
+    if (activeMode !== 'timed' || !smartCube.isConnected) {
+      endSolveTracking();
+      inspectionStartRef.current = 0;
+      return;
+    }
+    if (timerState !== 'idle') return;
+
     lastProcessedMoveTsRef.current = useCubeStore.getState().lastMoveTimestamp || 0;
-    inspectionStartRef.current = performance.now();
+    if (inspectionStartRef.current === 0) inspectionStartRef.current = performance.now();
     resetSolveTracking();
-  }, [activeMode, smartCube.isConnected, timerState, resetSolveTracking]);
+
+    // Seed the CFOP phase tracker from the clean `default · scramble · z2` frame (the raw
+    // store `pattern` isn't usable here — during a guided scramble it accumulates the
+    // physical scramble turns on top of the z2 target).
+    let cancelled = false;
+    endSolveTracking();
+    // Synchronous, race-free seed for the guided-scramble flow (always has currentScramble).
+    if (currentScramble) {
+      try {
+        beginSolveTracking(getDefaultPattern().applyAlg(new Alg(`${currentScramble} z2`)));
+      } catch (err) {
+        console.warn('Failed to seed solve phase tracker from scramble:', err);
+      }
+    }
+    // Upgrade to / cover with the cube's real current state if the read lands before the
+    // first turn (handles a stale currentScramble, or a mid-solve connect with none).
+    const tsAtSeed = useCubeStore.getState().lastMoveTimestamp;
+    readActiveSmartCubePattern().then((raw) => {
+      if (cancelled || !raw) return;
+      if (useCubeStore.getState().lastMoveTimestamp !== tsAtSeed) return;
+      try {
+        beginSolveTracking(raw.applyAlg(new Alg('z2')));
+      } catch {
+        /* keep whatever seed we have (or none -> raw phaseStatus fallback) */
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeMode, smartCube.isConnected, timerState, currentScramble, resetSolveTracking, beginSolveTracking, endSolveTracking]);
 
   // Auto-start solve on physical turn when smart cube is connected and timer is idle / inspecting
   useEffect(() => {
@@ -146,12 +205,17 @@ export function useTimer() {
     }
   }, [monotonicPhase, timerState]);
 
-  // Handle completion when cube becomes solved in running state
+  // Handle completion when cube becomes solved in running state. Prefer the dedicated
+  // solve tracker (correct CFOP frame) when it's active; otherwise fall back to the raw
+  // store status (manual / non-connected solves).
+  const solvedNow = solveTracker.active
+    ? solveTracker.status.isFullySolved
+    : phaseStatus.isFullySolved;
   useEffect(() => {
-    if (timerState === 'running' && phaseStatus.isFullySolved) {
+    if (timerState === 'running' && solvedNow) {
       stopTimer();
     }
-  }, [timerState, phaseStatus.isFullySolved, stopTimer]);
+  }, [timerState, solvedNow, stopTimer]);
 
 
   const updateRunningTime = useCallback(() => {

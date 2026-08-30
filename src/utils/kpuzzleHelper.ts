@@ -69,6 +69,22 @@ export function applyAlgToPattern(pattern: KPattern, algStr: string): KPattern {
   }
 }
 
+/** Face relabel across a z2 whole-cube rotation: U<->D, L<->R, F/B fixed. */
+const Z2_FACE_RELABEL: Record<string, string> = { U: 'D', D: 'U', L: 'R', R: 'L', F: 'F', B: 'B' };
+
+/**
+ * Relabel a single face-turn token across a z2 rotation (`R2` -> `L2`, `U'` -> `D'`).
+ * Modifiers are untouched; whole-cube rotations, slices and unrecognised tokens pass
+ * through unchanged. Used to bring smart-cube move events (reported in the cube's
+ * calibrated / default frame) into the app's post-z2 CFOP frame for phase detection.
+ */
+export function relabelMoveZ2(move: string): string {
+  const m = move.trim();
+  const face = m.charAt(0).toUpperCase();
+  const mapped = Z2_FACE_RELABEL[face];
+  return mapped ? mapped + m.slice(1) : move;
+}
+
 export function isPatternSolved(pattern: any): boolean {
   if (!pattern) return false;
   const pData = pattern.patternData || pattern;
