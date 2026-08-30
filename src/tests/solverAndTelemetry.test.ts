@@ -104,11 +104,34 @@ describe('Telemetry and Stats Calculations', () => {
     expect(result.phases[0].name).toBe('inspection');
     expect(result.phases[1].name).toBe('cross');
 
-    // Recognition = gap before the phase's first move. Cross starts with the timer (0);
-    // f2l-1's first move landed 1600ms after the last cross move.
+    // Cross is the first scored phase — no pre-phase recognition (thinking happened during
+    // inspection). f2l-1 here has a single move, so recognition falls back to that move's
+    // gap (1600ms after the last cross move).
     expect(result.phases[1].recognitionMs).toBe(0);
     const f2l1 = result.phases.find((p) => p.name === 'f2l-1');
     expect(f2l1?.recognitionMs).toBe(1600);
+  });
+
+  it('measures recognition as the gap before a phase\'s first real move, not the boundary move', () => {
+    const result = calculateSolveTelemetry(
+      2000,
+      [
+        // cross
+        { move: 'D', timestamp: 1000, deltaMs: 0, phase: 'cross' },
+        { move: 'R', timestamp: 1200, deltaMs: 200, phase: 'cross' },
+        // The move that *completes* cross is credited forward to f2l-1 (monotonic
+        // detection) — executed fast (180ms) at the tail of cross.
+        { move: "U'", timestamp: 1380, deltaMs: 180, phase: 'f2l-1' },
+        // ...then a long look for the first pair (1500ms) — the real recognition.
+        { move: 'R', timestamp: 2880, deltaMs: 1500, phase: 'f2l-1' },
+        { move: "U'", timestamp: 3080, deltaMs: 200, phase: 'f2l-1' },
+      ],
+      4000,
+      true
+    );
+
+    const f2l1 = result.phases.find((p) => p.name === 'f2l-1');
+    expect(f2l1?.recognitionMs).toBe(1500);
   });
 
   it('formats time with minutes and hundredths correctly', () => {

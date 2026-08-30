@@ -5,9 +5,9 @@ import { useTimer } from '../../hooks/useTimer';
 import { useCubeStore } from '../../store/useCubeStore';
 import { useAppStore } from '../../store/useAppStore';
 import { formatTime } from '../../utils/telemetryCalculator';
-import { SplitRow } from '../ui/SplitRow';
 import { PhaseBreakdown } from '../ui/PhaseBreakdown';
-import { PHASE_COLORS, PHASE_DISPLAY_NAMES } from '../../utils/constants';
+import { LivePhaseSplits } from '../ui/LivePhaseSplits';
+import { PHASE_DISPLAY_NAMES } from '../../utils/constants';
 import { getSolvesByProfile, calculateSessionStats, type SessionStats } from '../../db/repository';
 
 export const TimedSolveView: React.FC = () => {
@@ -24,7 +24,7 @@ export const TimedSolveView: React.FC = () => {
     handleHoldRelease,
   } = useTimer();
 
-  const { monotonicPhase: rawMonotonicPhase, smartCube, moveHistory, phaseStatus, visualAlg, solveTracker } = useCubeStore();
+  const { monotonicPhase: rawMonotonicPhase, smartCube, moveHistory, phaseStatus, visualAlg, solveTracker, lastMoveTimestamp } = useCubeStore();
   // During a connected solve the dedicated CFOP tracker holds the correct live phase.
   const monotonicPhase = solveTracker.active ? solveTracker.monotonicPhase : rawMonotonicPhase;
   const { currentProfileId, currentScramble, setMode } = useAppStore();
@@ -197,38 +197,12 @@ export const TimedSolveView: React.FC = () => {
             />
           </div>
         ) : timerState === 'running' && smartCube.isConnected ? (
-          <div>
-            <SplitRow
-              color={PHASE_COLORS.cross}
-              name="Cross"
-              timeStr="…"
-              isRunning={monotonicPhase === 'cross'}
-            />
-            <SplitRow
-              color={PHASE_COLORS['f2l-1']}
-              name="F2L 1"
-              timeStr="…"
-              isRunning={monotonicPhase === 'f2l-1'}
-            />
-            <SplitRow
-              color={PHASE_COLORS['f2l-2']}
-              name="F2L 2"
-              timeStr="…"
-              isRunning={monotonicPhase === 'f2l-2'}
-            />
-            <SplitRow
-              color={PHASE_COLORS.oll}
-              name="OLL"
-              timeStr="…"
-              isRunning={monotonicPhase === 'oll'}
-            />
-            <SplitRow
-              color={PHASE_COLORS.pll}
-              name="PLL"
-              timeStr="…"
-              isRunning={monotonicPhase === 'pll' || monotonicPhase === 'auf'}
-            />
-          </div>
+          <LivePhaseSplits
+            moves={solveTracker.active ? solveTracker.moveHistory : moveHistory}
+            currentPhase={monotonicPhase}
+            lastMoveTs={lastMoveTimestamp}
+            running={timerState === 'running'}
+          />
         ) : (
           <div className="py-4 px-3 text-center text-xs text-[var(--text-muted)] font-sans">
             {smartCube.isConnected

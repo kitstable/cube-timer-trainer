@@ -3,6 +3,29 @@ import type { PhaseSplit } from '../types/db';
 
 export const DEFAULT_PAUSE_THRESHOLD_MS = 800;
 
+/**
+ * Recognition = the pause after finishing the previous phase, before this phase's first
+ * *real* move (looking at the cube, identifying the case, deciding the alg).
+ *
+ * Monotonic phase detection credits the move that *completes* a phase's goal to the next
+ * phase, so `phaseMoves[0]` is really that boundary move — executed fast at the tail of
+ * the previous phase, its gap is execution, not thinking. The genuine recognition pause is
+ * the gap before `phaseMoves[1]`. Using `phaseMoves[0]` (the old behaviour) reported a
+ * quarter-turn's execution time and made every recognition look implausibly short.
+ *
+ * Falls back to `phaseMoves[0]` for a lone-move phase (skip / bare AUF) and for the first
+ * scored phase (cross), which has no meaningful pre-phase recognition — its "thinking"
+ * happened during inspection.
+ */
+export function phaseRecognitionMs(
+  phaseMoves: Pick<TimestampedMove, 'deltaMs'>[],
+  isFirstScoredPhase: boolean
+): number {
+  if (phaseMoves.length === 0) return 0;
+  const useSecond = !isFirstScoredPhase && phaseMoves.length > 1;
+  return Math.round(useSecond ? phaseMoves[1].deltaMs : phaseMoves[0].deltaMs);
+}
+
 export interface SolvedTelemetryResult {
   totalTimeMs: number;
   totalMoves: number;
@@ -74,6 +97,7 @@ export function calculateSolveTelemetry(
 
   let cumulativeTimeMs = inspectionDurationMs;
   let totalPauseMs = 0;
+  let isFirstScoredPhase = true;
 
   for (const phase of phasesInOrder) {
     if (phase === 'inspection' || phase === 'solved') continue;
@@ -84,12 +108,8 @@ export function calculateSolveTelemetry(
     const moveCount = phaseMoves.length;
     const durationMs = phaseMoves.reduce((acc, m) => acc + m.deltaMs, 0);
 
-    // The gap before the phase's first move = time spent recognising/planning this phase
-    // after finishing the previous one. NOTE: monotonic phase detection credits the move
-    // that *completes* a phase's goal to the next phase, so this is "gap before the first
-    // move labelled with this phase" — off by ~one quarter-turn at each boundary. Real
-    // recognition pauses (~1s+) dwarf that noise.
-    const recognitionMs = Math.round(phaseMoves[0].deltaMs);
+    const recognitionMs = phaseRecognitionMs(phaseMoves, isFirstScoredPhase);
+    isFirstScoredPhase = false;
 
     let pauseMs = 0;
     for (const m of phaseMoves) {

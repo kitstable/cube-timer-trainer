@@ -163,15 +163,25 @@ Both are on `claude/smart-cube-connection-state-rs2s9a`.
    - `relabelMoveZ2` (`kpuzzleHelper.ts`) — face relabel across z2 (U↔D, L↔R). Smart-cube
      move events are reported in the cube's calibrated/default frame; the app's CFOP tables
      are post-z2.
-   - `PhaseSplit.recognitionMs` (new) = idle gap before a phase's first recorded move
-     (between-phase thinking time). Boundary imprecision: monotonic detection credits the
-     phase-*completing* move to the next phase, so it's off by ~one quarter-turn — fine next
-     to real ~1s+ pauses.
+   - `PhaseSplit.recognitionMs` (new) = the pause before a phase's first *real* move
+     (between-phase thinking time). Monotonic detection credits the phase-*completing* move
+     to the next phase, so `phaseMoves[0]` is that fast boundary move — `phaseRecognitionMs()`
+     (`telemetryCalculator.ts`) therefore measures the gap before `phaseMoves[1]`, falling
+     back to `[0]` for a lone-move phase and the first scored phase (cross). Measuring
+     `phaseMoves[0]` directly (the original code) reported a quarter-turn's execution time
+     and made every recognition look implausibly short.
    - `Solve.totalMoves` / `Solve.overallTps` (new, optional) are persisted.
    - `src/components/ui/PhaseBreakdown.tsx` (new, shared by `TimedSolveView` result panel
      and `HistoryView` detail modal) renders per-phase time / proportion% / moves / TPS, the
      `+Xs recognition` sub-line, and an overall footer. Old solves without the new fields
      render without them.
+   - `src/components/ui/LivePhaseSplits.tsx` (new) — the running-solve splits panel in
+     `TimedSolveView` (replaced the old hard-coded 5×`SplitRow` block; `SplitRow` deleted).
+     Driven off `solveTracker.moveHistory` + the live `monotonicPhase`: each CFOP phase
+     shows as upcoming / running / done, a completed phase locks in its split time, gets a
+     ✓, and flashes its phase colour for ~900ms (own 100ms tick so the active phase's clock
+     and the flash expiry advance between physical turns). Uses the same `phaseRecognitionMs`
+     as the post-solve breakdown.
 
 ## Where the code stands relative to the spec — open items to discuss
 
