@@ -46,6 +46,13 @@ export const PHASE_DISPLAY_NAMES: Record<CFOPPhase, string> = {
 
 export const ALL_F2L_SLOTS: F2LSlotId[] = ['FR', 'FL', 'BR', 'BL'];
 
+/**
+ * Guided scramble: how long to wait for a second quarter-turn before surfacing a
+ * same-face "partial" cue. Absorbs fluid double turns (an `R2` arrives as `R` + `R`)
+ * silently; a genuine mid-face stop still shows the cue after this delay.
+ */
+export const SCRAMBLE_PARTIAL_GRACE_MS = 400;
+
 export const CFOP_PHASE_ORDER: CFOPPhase[] = [
   'cross',
   'f2l-1',

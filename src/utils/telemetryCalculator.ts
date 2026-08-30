@@ -84,6 +84,13 @@ export function calculateSolveTelemetry(
     const moveCount = phaseMoves.length;
     const durationMs = phaseMoves.reduce((acc, m) => acc + m.deltaMs, 0);
 
+    // The gap before the phase's first move = time spent recognising/planning this phase
+    // after finishing the previous one. NOTE: monotonic phase detection credits the move
+    // that *completes* a phase's goal to the next phase, so this is "gap before the first
+    // move labelled with this phase" — off by ~one quarter-turn at each boundary. Real
+    // recognition pauses (~1s+) dwarf that noise.
+    const recognitionMs = Math.round(phaseMoves[0].deltaMs);
+
     let pauseMs = 0;
     for (const m of phaseMoves) {
       if (m.deltaMs >= pauseThresholdMs) {
@@ -109,6 +116,7 @@ export function calculateSolveTelemetry(
       moveCount,
       tps,
       pauseRatio,
+      recognitionMs,
     });
   }
 

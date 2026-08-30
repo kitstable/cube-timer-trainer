@@ -33,7 +33,7 @@ export function useTimer() {
     inspectionStartRef.current = performance.now();
   }, []);
 
-  const startSolve = useCallback(() => {
+  const startSolve = useCallback((opts?: { preserveTracking?: boolean }) => {
     if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
 
     const now = performance.now();
@@ -41,7 +41,10 @@ export function useTimer() {
     currentPhaseRef.current = 'cross';
     phaseTimingsRef.current = [{ phase: 'cross', start: now, end: now }];
 
-    resetSolveTracking();
+    // On the smart-cube auto-start path the triggering turn is already in `moveHistory`
+    // (and tracking was reset when Timed mode was entered) — clearing here would drop the
+    // first move from the count. Manual / no-cube starts still reset.
+    if (!opts?.preserveTracking) resetSolveTracking();
     setElapsedMs(0);
     setTimerState('running');
   }, [resetSolveTracking]);
@@ -75,6 +78,8 @@ export function useTimer() {
         cubeConnected: isCubeConnected,
         phases: telemetry.phases,
         totalTimeMs: finalSolveTimeMs,
+        totalMoves: telemetry.totalMoves,
+        overallTps: telemetry.overallTps,
       });
 
       setLastCompletedSolve(record);
@@ -98,6 +103,16 @@ export function useTimer() {
     setInspectionRemainingMs(15000);
   }, []);
 
+  // Entering Timed mode with a connected cube: ignore any turns made before now (e.g.
+  // finishing a scramble) so the timer doesn't auto-start on stale moves, start the
+  // inspection clock, and clear solve tracking so the first real turn is counted.
+  useEffect(() => {
+    if (activeMode !== 'timed' || !smartCube.isConnected || timerState !== 'idle') return;
+    lastProcessedMoveTsRef.current = useCubeStore.getState().lastMoveTimestamp || 0;
+    inspectionStartRef.current = performance.now();
+    resetSolveTracking();
+  }, [activeMode, smartCube.isConnected, timerState, resetSolveTracking]);
+
   // Auto-start solve on physical turn when smart cube is connected and timer is idle / inspecting
   useEffect(() => {
     if (activeMode !== 'timed' || !smartCube.isConnected || !lastMoveTimestamp || !lastMove) return;
@@ -105,7 +120,7 @@ export function useTimer() {
     lastProcessedMoveTsRef.current = lastMoveTimestamp;
 
     if (timerState === 'idle' || timerState === 'inspection') {
-      startSolve();
+      startSolve({ preserveTracking: true });
     }
   }, [activeMode, smartCube.isConnected, lastMoveTimestamp, lastMove, timerState, startSolve]);
 

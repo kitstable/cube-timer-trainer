@@ -118,6 +118,33 @@ Both are on `claude/smart-cube-connection-state-rs2s9a`.
    never a `pattern` check (in connected scramble mode `pattern` is the z2'd *target* with
    raw physical moves layered on top and is meaningless).
 
+4. **Guided scramble absorbs half-finished double turns.** A physical `R2` arrives as two
+   separate `R` quarter-turn events (GAN/QiYi never emit doubles), so the first `R` used to
+   flash the amber "partial" cue for the tens of ms until the second landed.
+   `src/utils/scramblePartialGate.ts` (pure, dependency-injected) now sits between the BLE
+   event and `applyPhysicalScrambleMove` in `useSmartCube.ts`: a turn that classifies
+   `partial` is *held* for `SCRAMBLE_PARTIAL_GRACE_MS` (400ms); a second turn in that window
+   commits the held one and processes the new one (a real double turn resolves to `progress`
+   with no amber frame), and the timer firing commits it (genuine mid-face stop → cue
+   shows). `applyMove`/`visualAlg` stay immediate — only the guide lags. `progress` /
+   `error` / `complete` are never deferred.
+
+5. **Timed Solve: no more spurious autostart, plus inspection + richer phase telemetry.**
+   - `useTimer.ts` gained a seeding effect: on entering Timed mode with a connected cube +
+     idle timer it snapshots `lastMoveTimestamp` (so finishing a scramble can't auto-start
+     the solve), starts the inspection clock (`inspectionStartRef`), and calls
+     `resetSolveTracking()`. The auto-start effect now calls `startSolve({ preserveTracking:
+     true })` so the first real turn — already in `moveHistory` — is counted.
+   - `PhaseSplit.recognitionMs` (new) = the idle gap before a phase's first recorded move
+     (between-phase thinking time), computed in `telemetryCalculator.ts`. Known imprecision:
+     monotonic phase detection credits the phase-*completing* move to the next phase, so
+     this is off by ~one quarter-turn per boundary — fine next to real ~1s+ pauses.
+   - `Solve.totalMoves` / `Solve.overallTps` (new, optional) are now persisted.
+   - `src/components/ui/PhaseBreakdown.tsx` (new, shared by `TimedSolveView` result panel
+     and `HistoryView` detail modal) renders per-phase time / proportion% / moves / TPS, the
+     `+Xs recognition` sub-line, and an overall footer. Old solves lacking the new fields
+     just render without them.
+
 ## Where the code stands relative to the spec — open items to discuss
 
 The spec is the intended design; here's where the actual code hasn't caught up, or made a

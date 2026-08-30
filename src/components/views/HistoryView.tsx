@@ -4,7 +4,7 @@ import { useAppStore } from '../../store/useAppStore';
 import { getSolvesByProfile, deleteSolve, calculateSessionStats, type SessionStats } from '../../db/repository';
 import type { Solve } from '../../types/db';
 import { formatTime } from '../../utils/telemetryCalculator';
-import { PHASE_COLORS, PHASE_DISPLAY_NAMES } from '../../utils/constants';
+import { PhaseBreakdown } from '../ui/PhaseBreakdown';
 
 export const HistoryView: React.FC = () => {
   const { currentProfileId } = useAppStore();
@@ -163,28 +163,12 @@ export const HistoryView: React.FC = () => {
                 Phase Breakdown
               </div>
               {selectedSolve.phases && selectedSolve.phases.length > 0 ? (
-                selectedSolve.phases.map((p, idx) => {
-                  const dur = Math.max(0, p.endTs - p.startTs);
-                  const color = PHASE_COLORS[p.name] || 'var(--text-muted)';
-                  const name = (PHASE_DISPLAY_NAMES as any)[p.name] || p.name;
-                  return (
-                    <div
-                      key={idx}
-                      className="flex items-center justify-between p-2 rounded-lg bg-[var(--surface-2)] text-xs font-mono"
-                    >
-                      <div className="flex items-center gap-2">
-                        <span className="w-2 h-2 rounded-[2px]" style={{ backgroundColor: color }} />
-                        <span className="font-sans text-[var(--text-muted)]">{name}</span>
-                      </div>
-                      <div className="flex items-center gap-3">
-                        {p.tps !== undefined && p.tps > 0 && (
-                          <span className="text-[10px] text-[var(--text-muted)]">{p.tps} TPS</span>
-                        )}
-                        <span className="font-semibold text-[var(--text)]">{(dur / 1000).toFixed(2)}s</span>
-                      </div>
-                    </div>
-                  );
-                })
+                <PhaseBreakdown
+                  phases={selectedSolve.phases}
+                  totalTimeMs={selectedSolve.totalTimeMs}
+                  totalMoves={selectedSolve.cubeConnected ? selectedSolve.totalMoves : undefined}
+                  overallTps={selectedSolve.cubeConnected ? selectedSolve.overallTps : undefined}
+                />
               ) : (
                 <div className="text-xs text-[var(--text-muted)] text-center py-2">
                   No phase telemetry recorded for this solve.

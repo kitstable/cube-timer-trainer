@@ -4,10 +4,33 @@ import { useCubeStore } from '../store/useCubeStore';
 import { useAppStore } from '../store/useAppStore';
 import { useSolverWorker } from './useSolverWorker';
 import { isPatternSolved } from '../utils/kpuzzleHelper';
+import { classifyScrambleMove } from '../utils/scrambleTracker';
+import { createScramblePartialGate } from '../utils/scramblePartialGate';
+import { SCRAMBLE_PARTIAL_GRACE_MS } from '../utils/constants';
 import type { AppMode, SmartCubeState } from '../types/cube';
 
 // Module-level singleton keeps the Bluetooth connection active across modal opens/closes
 let activeSmartPuzzle: any = null;
+
+/**
+ * Defers a same-face "partial" turn briefly so a fluid double turn (`R2` arriving as two
+ * `R` events) doesn't flash the correction UI between its halves. Sits between the BLE
+ * event and the guided-scramble tracker; `applyMove` to `useCubeStore` stays immediate.
+ */
+const scramblePartialGate = createScramblePartialGate({
+  classify: (move) => {
+    const s = useAppStore.getState();
+    return classifyScrambleMove(s.scrambleMoves, s.scrambleDoneMoves, move, s.scrambleCorrectionActive).kind;
+  },
+  commit: (move) => {
+    // The tab may have changed during the grace window — only the scramble guide consumes this.
+    const s = useAppStore.getState();
+    if (s.activeMode === 'scramble' && s.scrambleMoves.length > 0) {
+      s.applyPhysicalScrambleMove(move);
+    }
+  },
+  graceMs: SCRAMBLE_PARTIAL_GRACE_MS,
+});
 
 /**
  * Reads the physical cube's pattern from the puzzle (when the protocol supports it) and,
@@ -129,7 +152,7 @@ export function useSmartCube() {
         // moves for wrong turns (see utils/scrambleTracker.ts).
         const { activeMode, scrambleMoves } = useAppStore.getState();
         if (activeMode === 'scramble' && scrambleMoves.length > 0) {
-          useAppStore.getState().applyPhysicalScrambleMove(moveStr);
+          scramblePartialGate.feed(moveStr);
         }
       });
 
@@ -138,6 +161,7 @@ export function useSmartCube() {
       if (device && device.addEventListener) {
         device.addEventListener('gattserverdisconnected', () => {
           activeSmartPuzzle = null;
+          scramblePartialGate.reset();
           setSmartCubeState({
             isConnected: false,
             isConnecting: false,
@@ -151,6 +175,7 @@ export function useSmartCube() {
     } catch (err: any) {
       console.warn('Smart cube connection error or cancelled:', err);
       activeSmartPuzzle = null;
+      scramblePartialGate.reset();
       setSmartCubeState({
         isConnected: false,
         isConnecting: false,
@@ -175,6 +200,7 @@ export function useSmartCube() {
       }
       activeSmartPuzzle = null;
     }
+    scramblePartialGate.reset();
 
     setSmartCubeState({
       isConnected: false,

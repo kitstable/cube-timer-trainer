@@ -6,6 +6,7 @@ import { useCubeStore } from '../../store/useCubeStore';
 import { useAppStore } from '../../store/useAppStore';
 import { formatTime } from '../../utils/telemetryCalculator';
 import { SplitRow } from '../ui/SplitRow';
+import { PhaseBreakdown } from '../ui/PhaseBreakdown';
 import { PHASE_COLORS, PHASE_DISPLAY_NAMES } from '../../utils/constants';
 import { getSolvesByProfile, calculateSessionStats, type SessionStats } from '../../db/repository';
 
@@ -179,22 +180,13 @@ export const TimedSolveView: React.FC = () => {
       {/* Phase Splits Panel */}
       <div className="bg-[var(--surface)] border border-[var(--border)] rounded-2xl p-1 mb-4">
         {lastCompletedSolve && lastCompletedSolve.phases && lastCompletedSolve.phases.length > 0 ? (
-          <div>
-            {lastCompletedSolve.phases.map((split, idx) => {
-              const dur = Math.max(0, split.endTs - split.startTs);
-              const formatted = (dur / 1000).toFixed(2);
-              const color = PHASE_COLORS[split.name] || 'var(--text-muted)';
-              const name = (PHASE_DISPLAY_NAMES as any)[split.name] || split.name;
-              return (
-                <SplitRow
-                  key={idx}
-                  color={color}
-                  name={name}
-                  timeStr={`${formatted}s`}
-                  tps={split.tps}
-                />
-              );
-            })}
+          <div className="px-2 py-1">
+            <PhaseBreakdown
+              phases={lastCompletedSolve.phases}
+              totalTimeMs={lastCompletedSolve.totalTimeMs}
+              totalMoves={lastCompletedSolve.cubeConnected ? lastCompletedSolve.totalMoves : undefined}
+              overallTps={lastCompletedSolve.cubeConnected ? lastCompletedSolve.overallTps : undefined}
+            />
           </div>
         ) : timerState === 'running' && smartCube.isConnected ? (
           <div>

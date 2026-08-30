@@ -89,10 +89,10 @@ describe('Telemetry and Stats Calculations', () => {
     const result = calculateSolveTelemetry(
       3000, // 3s inspection
       [
-        { move: 'R', timestamp: 1000, deltaMs: 200, phase: 'cross' },
+        { move: 'R', timestamp: 1000, deltaMs: 0, phase: 'cross' },
         { move: 'U', timestamp: 1200, deltaMs: 200, phase: 'cross' },
         { move: "R'", timestamp: 1400, deltaMs: 200, phase: 'cross' },
-        { move: "F'", timestamp: 1600, deltaMs: 200, phase: 'f2l-1' },
+        { move: "F'", timestamp: 3000, deltaMs: 1600, phase: 'f2l-1' },
       ],
       5000, // 5s solve
       true
@@ -103,6 +103,12 @@ describe('Telemetry and Stats Calculations', () => {
     expect(result.phases.length).toBeGreaterThanOrEqual(2);
     expect(result.phases[0].name).toBe('inspection');
     expect(result.phases[1].name).toBe('cross');
+
+    // Recognition = gap before the phase's first move. Cross starts with the timer (0);
+    // f2l-1's first move landed 1600ms after the last cross move.
+    expect(result.phases[1].recognitionMs).toBe(0);
+    const f2l1 = result.phases.find((p) => p.name === 'f2l-1');
+    expect(f2l1?.recognitionMs).toBe(1600);
   });
 
   it('formats time with minutes and hundredths correctly', () => {
