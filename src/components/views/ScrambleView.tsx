@@ -11,6 +11,9 @@ export const ScrambleView: React.FC = () => {
     currentScramble,
     scrambleMoves,
     scrambleProgressIndex,
+    scrambleRemainingMoves,
+    scrambleDoneMoves,
+    scrambleFeedback,
     setScramble,
     setMode,
     setScrambleProgressIndex,
@@ -18,9 +21,11 @@ export const ScrambleView: React.FC = () => {
     stepBackScrambleProgress,
     resetScrambleProgress,
     completeScrambleProgress,
+    clearScrambleFeedback,
+    resetPhysicalScramble,
   } = useAppStore();
 
-  const { smartCube, setScramble: setCubeStoreScramble } = useCubeStore();
+  const { smartCube, visualAlg, setScramble: setCubeStoreScramble } = useCubeStore();
   const { generateScramble, isReady } = useSolverWorker();
   const [isGenerating, setIsGenerating] = useState(false);
   const [isAutoAdvancing, setIsAutoAdvancing] = useState(false);
@@ -66,11 +71,42 @@ export const ScrambleView: React.FC = () => {
     return () => clearInterval(timer);
   }, [isAutoAdvancing, scrambleProgressIndex, scrambleMoves.length, smartCube.isConnected]);
 
-  const isComplete = scrambleMoves.length > 0 && scrambleProgressIndex >= scrambleMoves.length;
-  const currentExpectedMove = !isComplete && scrambleMoves.length > 0 ? scrambleMoves[scrambleProgressIndex] : null;
+  // With a smart cube connected, every physical turn is tracked (utils/scrambleTracker.ts):
+  // guidance runs off `scrambleRemainingMoves`, not the manual progress index.
+  const connected = smartCube.isConnected;
+  const physicalVisual = connected && visualAlg.length > 0;
+  // Cube connected mid-scramble (or before returning to solved): visualAlg is populated
+  // but no scramble turn has committed yet.
+  const awaitingSolved = connected && physicalVisual && scrambleDoneMoves.length === 0;
+  const feedbackKind = scrambleFeedback?.kind ?? null;
+  const correctionCount = scrambleFeedback?.corrections.length ?? 0;
 
-  // The 3D cube visualizer displays the progressive scramble algorithm up to scrambleProgressIndex
+  const isComplete = connected
+    ? scrambleMoves.length > 0 && scrambleRemainingMoves.length === 0
+    : scrambleMoves.length > 0 && scrambleProgressIndex >= scrambleMoves.length;
+
+  const currentExpectedMove = connected
+    ? scrambleRemainingMoves[0] ?? null
+    : !isComplete && scrambleMoves.length > 0
+    ? scrambleMoves[scrambleProgressIndex]
+    : null;
+
+  const doneCount = connected ? scrambleDoneMoves.length : scrambleProgressIndex;
+  const totalCount = connected
+    ? scrambleDoneMoves.length + scrambleRemainingMoves.length
+    : scrambleMoves.length;
+
+  // The 3D cube visualizer: mirror the real physical cube when connected, otherwise show
+  // the progressive scramble algorithm up to scrambleProgressIndex.
   const currentProgressiveAlg = scrambleMoves.slice(0, scrambleProgressIndex).join(' ');
+  const cubeAlg = physicalVisual ? visualAlg : currentProgressiveAlg;
+
+  // Auto-fade the wrong/half-done cue if the user pauses.
+  useEffect(() => {
+    if (!scrambleFeedback) return;
+    const t = setTimeout(() => clearScrambleFeedback(), 2500);
+    return () => clearTimeout(t);
+  }, [scrambleFeedback?.at, clearScrambleFeedback]);
 
   const handleToggleAutoAdvance = () => {
     if (isComplete) {
@@ -101,16 +137,24 @@ export const ScrambleView: React.FC = () => {
       <div className="text-xs text-[var(--text-muted)] mb-3 flex items-center justify-between">
         <span>Hold White on top (U), Green on front (F)</span>
         <span className="font-mono text-[11px] text-[var(--text-muted)]">
-          {scrambleProgressIndex} / {scrambleMoves.length}
+          {doneCount} / {totalCount}
         </span>
       </div>
 
-      {/* 3D Cube Card - starts Solved and updates progressively move by move */}
-      <div className="bg-[var(--surface)] border border-[var(--border)] rounded-2xl p-3 mb-3 flex flex-col items-center justify-center min-h-[260px] relative">
+      {/* 3D Cube Card - mirrors the physical cube when connected, else steps through the scramble */}
+      <div
+        className={`bg-[var(--surface)] border border-[var(--border)] rounded-2xl p-3 mb-3 flex flex-col items-center justify-center min-h-[260px] relative transition-shadow duration-300 ${
+          feedbackKind === 'error'
+            ? 'ring-2 ring-[var(--red)] shadow-[0_0_0_4px_rgba(200,16,46,0.28)]'
+            : feedbackKind === 'partial'
+            ? 'ring-2 ring-[var(--orange)]'
+            : ''
+        }`}
+      >
         {currentScramble ? (
           <TwistyPlayerWrapper
             setupAlg=""
-            alg={currentProgressiveAlg}
+            alg={cubeAlg}
             tempoScale={2}
             height={250}
           />
@@ -122,7 +166,7 @@ export const ScrambleView: React.FC = () => {
 
         {/* Floating Scramble Step Badge */}
         <div className="absolute top-3 left-3 px-2 py-0.5 rounded-md bg-[var(--surface-2)]/90 border border-[var(--border)] text-[11px] font-mono text-[var(--text-muted)] backdrop-blur-xs">
-          {isComplete ? 'Scrambled' : `Step ${scrambleProgressIndex} of ${scrambleMoves.length}`}
+          {isComplete ? 'Scrambled' : `Step ${doneCount} of ${totalCount}`}
         </div>
       </div>
 
@@ -130,7 +174,7 @@ export const ScrambleView: React.FC = () => {
       <div className="bg-[var(--surface)] border border-[var(--border)] rounded-2xl p-3.5 mb-3 relative z-10 shadow-xs">
         <div className="flex items-center justify-between gap-2 mb-2">
           <div className="text-[11px] uppercase tracking-wider text-[var(--text-muted)] font-medium">
-            {isComplete ? 'Status' : `Move Guidance (${scrambleProgressIndex + 1} of ${scrambleMoves.length})`}
+            {isComplete ? 'Status' : awaitingSolved ? 'Get Ready' : `Move Guidance (${doneCount + 1} of ${totalCount})`}
           </div>
 
           {/* Auto-advance 2s status badge */}
@@ -150,15 +194,38 @@ export const ScrambleView: React.FC = () => {
               <div className="text-xs text-[var(--text-muted)]">Cube is in official WCA scrambled state</div>
             </div>
           </div>
+        ) : awaitingSolved ? (
+          <div className="text-xs text-[var(--yellow)] bg-[var(--yellow)]/10 border border-[var(--yellow)]/30 rounded-lg px-3 py-2 leading-relaxed">
+            Return your cube to the solved state to begin. Every turn from there is tracked
+            move by move.
+          </div>
         ) : (
           <div className="flex items-center gap-3">
-            <div className="font-mono text-2xl font-bold text-[var(--white)] bg-[var(--surface-2)] border border-[var(--border)] px-3 py-1 rounded-xl shadow-xs shrink-0 min-w-[54px] text-center">
+            <div
+              className={`font-mono text-2xl font-bold px-3 py-1 rounded-xl shadow-xs shrink-0 min-w-[54px] text-center border transition-colors ${
+                feedbackKind === 'error'
+                  ? 'bg-[var(--red)]/15 text-[var(--red)] border-[var(--red)]/40'
+                  : feedbackKind === 'partial'
+                  ? 'bg-[var(--orange)]/15 text-[var(--orange)] border-[var(--orange)]/40'
+                  : 'bg-[var(--surface-2)] text-[var(--white)] border-[var(--border)]'
+              }`}
+            >
               {currentExpectedMove}
             </div>
             <div className="min-w-0 flex-1">
-              <div className="text-xs font-semibold text-[var(--text)] truncate">
-                {getMoveDescription(currentExpectedMove || '')}
-              </div>
+              {feedbackKind === 'error' ? (
+                <div className="text-xs font-semibold text-[var(--red)]">
+                  Wrong turn — do {scrambleFeedback?.corrections.join(' ')} to get back on track
+                </div>
+              ) : feedbackKind === 'partial' ? (
+                <div className="text-xs font-semibold text-[var(--orange)]">
+                  Half done — keep turning this face to {scrambleFeedback?.corrections.join(' ')}
+                </div>
+              ) : (
+                <div className="text-xs font-semibold text-[var(--text)] truncate">
+                  {getMoveDescription(currentExpectedMove || '')}
+                </div>
+              )}
               <div className="text-[11px] text-[var(--text-muted)] mt-0.5">
                 Hold White on top (U), Green on front (F)
               </div>
@@ -167,35 +234,45 @@ export const ScrambleView: React.FC = () => {
         )}
 
         {/* Stepping & Auto-advance Toolbar */}
-        <div className="flex items-center justify-between gap-2 mt-3 pt-3 border-t border-[var(--border)]/60">
-          {!smartCube.isConnected ? (
-            <button
-              onClick={handleToggleAutoAdvance}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-heading font-medium transition-all cursor-pointer ${
-                isAutoAdvancing
-                  ? 'bg-[var(--green)] text-black font-semibold shadow-xs'
-                  : 'bg-[var(--surface-2)] text-[var(--text)] hover:bg-[var(--border)]'
-              }`}
-              title={isAutoAdvancing ? 'Pause auto-advancing' : 'Auto-advance with 2s delay per move'}
-            >
-              {isAutoAdvancing ? (
-                <>
-                  <Pause className="w-3.5 h-3.5 fill-current" />
-                  <span>Pause (2s)</span>
-                </>
-              ) : (
-                <>
-                  <Play className="w-3.5 h-3.5 fill-current" />
-                  <span>Auto (2s)</span>
-                </>
-              )}
-            </button>
-          ) : (
+        {connected ? (
+          <div className="flex items-center justify-between gap-2 mt-3 pt-3 border-t border-[var(--border)]/60">
             <div className="text-[11px] text-[var(--green)] flex items-center gap-1.5">
               <span className="w-1.5 h-1.5 rounded-full bg-[var(--green)]" />
-              <span>Smart cube synced</span>
+              <span>Smart cube · every turn tracked</span>
             </div>
-          )}
+            <button
+              onClick={() => resetPhysicalScramble()}
+              disabled={scrambleDoneMoves.length === 0}
+              title="Restart scramble tracking (cube must be solved)"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-heading font-medium bg-[var(--surface-2)] text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--border)] disabled:opacity-30 disabled:cursor-not-allowed transition-colors cursor-pointer"
+            >
+              <RotateCcw className="w-3.5 h-3.5" />
+              <span>Reset</span>
+            </button>
+          </div>
+        ) : (
+        <div className="flex items-center justify-between gap-2 mt-3 pt-3 border-t border-[var(--border)]/60">
+          <button
+            onClick={handleToggleAutoAdvance}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-heading font-medium transition-all cursor-pointer ${
+              isAutoAdvancing
+                ? 'bg-[var(--green)] text-black font-semibold shadow-xs'
+                : 'bg-[var(--surface-2)] text-[var(--text)] hover:bg-[var(--border)]'
+            }`}
+            title={isAutoAdvancing ? 'Pause auto-advancing' : 'Auto-advance with 2s delay per move'}
+          >
+            {isAutoAdvancing ? (
+              <>
+                <Pause className="w-3.5 h-3.5 fill-current" />
+                <span>Pause (2s)</span>
+              </>
+            ) : (
+              <>
+                <Play className="w-3.5 h-3.5 fill-current" />
+                <span>Auto (2s)</span>
+              </>
+            )}
+          </button>
 
           <div className="flex items-center gap-1.5 ml-auto">
             <button
@@ -248,6 +325,7 @@ export const ScrambleView: React.FC = () => {
             </button>
           </div>
         </div>
+        )}
       </div>
 
       {/* Scramble Moves Ribbon (Interactive chips) */}
@@ -257,44 +335,77 @@ export const ScrambleView: React.FC = () => {
             WCA 3x3 Scramble Sequence
           </span>
           <span className="text-[11px] text-[var(--text-muted)]">
-            Tap any move to jump
+            {connected ? 'Physical turns drive this' : 'Tap any move to jump'}
           </span>
         </div>
 
         <div className="font-mono text-sm font-medium leading-relaxed tracking-wide flex flex-wrap gap-1.5 justify-center py-1">
-          {scrambleMoves.map((m, idx) => {
-            const isDone = idx < scrambleProgressIndex;
-            const isCurrent = idx === scrambleProgressIndex;
+          {connected ? (
+            <>
+              {scrambleDoneMoves.map((m, idx) => (
+                <span
+                  key={`done-${idx}`}
+                  className="px-2 py-1 rounded-md text-xs font-mono text-[var(--text-muted)] opacity-40 line-through"
+                >
+                  {m}
+                </span>
+              ))}
+              {scrambleRemainingMoves.map((m, idx) => {
+                const isCorrection = feedbackKind !== null && idx < correctionCount;
+                const isNext = idx === 0 && !isCorrection;
+                return (
+                  <span
+                    key={`rem-${idx}`}
+                    className={`px-2 py-1 rounded-md text-xs font-mono transition-colors ${
+                      isCorrection && feedbackKind === 'error'
+                        ? 'bg-[var(--red)]/15 text-[var(--red)] ring-1 ring-[var(--red)]/40 font-bold'
+                        : isCorrection
+                        ? 'bg-[var(--orange)]/15 text-[var(--orange)] ring-1 ring-[var(--orange)]/40 font-bold'
+                        : isNext
+                        ? 'bg-[var(--white)] text-[var(--bg)] font-bold shadow-xs scale-105 ring-2 ring-[var(--white)]/30'
+                        : 'text-[var(--text)] bg-[var(--surface-2)]'
+                    }`}
+                  >
+                    {m}
+                  </span>
+                );
+              })}
+            </>
+          ) : (
+            scrambleMoves.map((m, idx) => {
+              const isDone = idx < scrambleProgressIndex;
+              const isCurrent = idx === scrambleProgressIndex;
 
-            return (
-              <button
-                key={idx}
-                onClick={() => {
-                  setIsAutoAdvancing(false);
-                  if (idx < scrambleProgressIndex) {
-                    setScrambleProgressIndex(idx);
-                  } else {
-                    setScrambleProgressIndex(idx + 1);
-                  }
-                }}
-                className={`px-2 py-1 rounded-md text-xs font-mono transition-all cursor-pointer ${
-                  isDone
-                    ? 'text-[var(--text-muted)] opacity-40 line-through bg-transparent'
-                    : isCurrent
-                    ? 'bg-[var(--white)] text-[var(--bg)] font-bold shadow-xs scale-105 ring-2 ring-[var(--white)]/30'
-                    : 'text-[var(--text)] bg-[var(--surface-2)] hover:bg-[var(--border)]'
-                }`}
-              >
-                {m}
-              </button>
-            );
-          })}
+              return (
+                <button
+                  key={idx}
+                  onClick={() => {
+                    setIsAutoAdvancing(false);
+                    if (idx < scrambleProgressIndex) {
+                      setScrambleProgressIndex(idx);
+                    } else {
+                      setScrambleProgressIndex(idx + 1);
+                    }
+                  }}
+                  className={`px-2 py-1 rounded-md text-xs font-mono transition-all cursor-pointer ${
+                    isDone
+                      ? 'text-[var(--text-muted)] opacity-40 line-through bg-transparent'
+                      : isCurrent
+                      ? 'bg-[var(--white)] text-[var(--bg)] font-bold shadow-xs scale-105 ring-2 ring-[var(--white)]/30'
+                      : 'text-[var(--text)] bg-[var(--surface-2)] hover:bg-[var(--border)]'
+                  }`}
+                >
+                  {m}
+                </button>
+              );
+            })
+          )}
         </div>
 
-        {smartCube.isConnected && (
+        {connected && (
           <div className="flex items-center justify-center gap-1.5 mt-2.5 pt-2 border-t border-[var(--border)]/50 text-xs text-[var(--green)]">
             <span className="w-1.5 h-1.5 rounded-full bg-[var(--green)] animate-pulse" />
-            <span>Smart cube connected · Matching physical turns auto-advance</span>
+            <span>Smart cube connected · every turn tracked, mistakes corrected inline</span>
           </div>
         )}
       </div>

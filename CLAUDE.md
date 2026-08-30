@@ -102,6 +102,22 @@ is local. Installable PWA via `vite-plugin-pwa`.
 
 Both are on `claude/smart-cube-connection-state-rs2s9a`.
 
+3. **Guided scramble now tracks every physical turn, not just matching ones.** Previously
+   `useSmartCube.ts` only advanced scramble progress on an exact `expected === moveStr`
+   match; wrong turns were applied to `useCubeStore` but invisible to the guide, and
+   `ScrambleView`'s 3D cube rendered from the progress *counter*, so one wrong turn desynced
+   the picture with no recovery. Now every turn goes through `src/utils/scrambleTracker.ts`
+   (pure move algebra — `remaining = done⁻¹ · scramble`, recomputed each move via
+   `simplifyMoveSequence`): it advances on the expected move, absorbs same-face
+   wrong-direction turns as "partials" (amber), and prepends correction move(s) for a wrong
+   face (red glow on the cube card + ribbon). With a cube connected the 3D view mirrors
+   `useCubeStore.visualAlg` (like Timed Solve) and the manual stepping controls are hidden.
+   The no-cube path (keyboard / 2s auto-advance / `scrambleProgressIndex`) is unchanged.
+   `scrambleTracker` is on the safe side of the solver boundary — pure move strings, no
+   `KPattern`, so the z2 gotchas don't apply; completion is `nextRemaining.length === 0`,
+   never a `pattern` check (in connected scramble mode `pattern` is the z2'd *target* with
+   raw physical moves layered on top and is meaningless).
+
 ## Where the code stands relative to the spec — open items to discuss
 
 The spec is the intended design; here's where the actual code hasn't caught up, or made a

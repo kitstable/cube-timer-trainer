@@ -142,3 +142,39 @@ export function simplifyAlgString(alg: string): string {
   const tokens = alg.trim().split(/\s+/);
   return simplifyMoveSequence(tokens).join(' ');
 }
+
+/**
+ * Inverts a single move token. Pure string algebra in the raw move-letter frame —
+ * `R -> R'`, `R' -> R`, `R2 -> R2`, `U -> U'`. Rotations/wides invert too (`y -> y'`).
+ * Never relabels faces (the caller is on the safe side of the solver boundary).
+ */
+export function invertMove(move: string): string {
+  const token = parseMoveToken(move);
+  if (!token) return move;
+  const inverted = (4 - (token.amount % 4)) % 4;
+  return formatMoveToken(token.face, inverted) ?? move;
+}
+
+/**
+ * The face letter of a move (`R2` -> `R`, `y'` -> `y`), or null if unparseable.
+ */
+export function moveFace(move: string): string | null {
+  return parseMoveToken(move)?.face ?? null;
+}
+
+/**
+ * True when two moves act on the same face (ignoring amount/direction).
+ */
+export function sameFace(a: string, b: string): boolean {
+  const fa = moveFace(a);
+  return fa !== null && fa === moveFace(b);
+}
+
+/**
+ * True only for plain outer face turns (`U D F B L R` with optional `'`/`2`) — the
+ * moves that `simplifyMoveSequence` can safely merge and commute. Rotations, wide
+ * moves, slices and anything unrecognised return false.
+ */
+export function isSimpleFaceMove(move: string): boolean {
+  return Boolean(parseMoveToken(move)?.mergeable);
+}

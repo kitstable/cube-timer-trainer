@@ -50,6 +50,15 @@ export interface SmartCubeState {
   stateReadSupported: boolean;
 }
 
+/** Transient cue shown when a guided-scramble turn is wrong or half-done. */
+export interface ScrambleFeedback {
+  kind: 'error' | 'partial';
+  /** Leading remaining-ribbon tokens to highlight (red for error, amber for partial). */
+  corrections: string[];
+  /** `Date.now()` when raised — drives the auto-fade timer. */
+  at: number;
+}
+
 export interface MoveHint {
   phase: CFOPPhase;
   phaseName: string;

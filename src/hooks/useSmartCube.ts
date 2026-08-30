@@ -76,7 +76,7 @@ export async function syncPatternAndRoute(
 
 export function useSmartCube() {
   const { applyMove, setSmartCubeState, syncPhysicalPattern, setVisualAlg } = useCubeStore();
-  const { setMode, advanceScrambleProgress } = useAppStore();
+  const { setMode } = useAppStore();
   const { reconstructAlg } = useSolverWorker();
 
   const connect = useCallback(async () => {
@@ -121,17 +121,15 @@ export function useSmartCube() {
           ? leafEvent.timeStamp
           : Date.now();
 
-        // Dispatch move directly to store
+        // Dispatch move directly to store — every physical turn updates ground truth.
         applyMove(moveStr, timestamp);
 
-        // If in Scramble mode, check expected move and advance
-        const { activeMode, scrambleMoves, scrambleProgressIndex } = useAppStore.getState();
-
+        // In Scramble mode, feed every turn to the guided-scramble tracker: it advances
+        // on the expected move, absorbs same-face partials, and prepends correction
+        // moves for wrong turns (see utils/scrambleTracker.ts).
+        const { activeMode, scrambleMoves } = useAppStore.getState();
         if (activeMode === 'scramble' && scrambleMoves.length > 0) {
-          const expected = scrambleMoves[scrambleProgressIndex];
-          if (expected && expected === moveStr) {
-            advanceScrambleProgress();
-          }
+          useAppStore.getState().applyPhysicalScrambleMove(moveStr);
         }
       });
 
@@ -160,7 +158,7 @@ export function useSmartCube() {
         stateReadSupported: true,
       });
     }
-  }, [applyMove, setSmartCubeState, syncPhysicalPattern, setMode, advanceScrambleProgress, setVisualAlg, reconstructAlg]);
+  }, [applyMove, setSmartCubeState, syncPhysicalPattern, setMode, setVisualAlg, reconstructAlg]);
 
   const disconnect = useCallback(() => {
     if (activeSmartPuzzle) {
