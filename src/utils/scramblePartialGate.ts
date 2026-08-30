@@ -42,6 +42,8 @@ export interface ScramblePartialGate {
   flush: () => void;
   /** Drop any held move without committing (e.g. on disconnect / scramble reset). */
   reset: () => void;
+  /** True while a `partial` turn is being held for its grace window. */
+  hasHeld: () => boolean;
 }
 
 export function createScramblePartialGate(deps: ScramblePartialGateDeps): ScramblePartialGate {
@@ -94,5 +96,5 @@ export function createScramblePartialGate(deps: ScramblePartialGateDeps): Scramb
     deps.commit(move);
   };
 
-  return { feed, flush, reset };
+  return { feed, flush, reset, hasHeld: () => heldMove !== null };
 }

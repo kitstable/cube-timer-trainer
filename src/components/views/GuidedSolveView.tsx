@@ -283,7 +283,7 @@ export const GuidedSolveView: React.FC = () => {
 
 
       {/* 3D Cube Card */}
-      <div className="bg-[var(--surface)] border border-[var(--border)] rounded-2xl p-3 mb-3 flex items-center justify-center min-h-[260px] relative">
+      <div className="bg-[var(--surface)] border border-[var(--border)] rounded-2xl p-3 mb-3 flex items-center justify-center min-h-[225px] relative">
         {isCalculating ? (
           <div className="flex flex-col items-center justify-center gap-2 text-sm text-[var(--text-muted)] font-heading">
             <RefreshCw className="w-5 h-5 animate-spin text-[var(--white)]" />
@@ -294,7 +294,7 @@ export const GuidedSolveView: React.FC = () => {
             setupAlg={currentScramble ? `${currentScramble} z2` : 'z2'}
             alg={progressiveAlg}
             tempoScale={2.5}
-            height={250}
+            height={215}
           />
         )}
 

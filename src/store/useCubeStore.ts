@@ -52,6 +52,16 @@ interface CubeStoreState {
    */
   visualAlg: string;
 
+  /**
+   * A faithful model of the *physical* cube's state, in the raw/default move-letter frame:
+   * seeded from each successful `getPattern()` read and advanced by every real turn, and —
+   * unlike `pattern` — never overwritten by `setScramble`/`init`. So it stays a reliable
+   * "is the physical cube actually solved right now?" signal even in connected Scramble
+   * mode, where `pattern` is the z2 scramble *target* with physical turns layered on and
+   * can't answer that. `null` until a smart cube reports its state.
+   */
+  physicalPattern: KPattern | null;
+
   // Actions
   init: () => Promise<void>;
   applyMove: (move: string, timestamp?: number) => void;
@@ -107,6 +117,7 @@ export const useCubeStore = create<CubeStoreState>((set, get) => ({
   monotonicPhase: 'cross',
   solvedSlots: [],
   visualAlg: '',
+  physicalPattern: null,
   solveTracker: INACTIVE_SOLVE_TRACKER,
   smartCube: {
     isConnected: false,
@@ -137,6 +148,7 @@ export const useCubeStore = create<CubeStoreState>((set, get) => ({
       set({
         pattern,
         scramblePattern: pattern,
+        physicalPattern: pattern,
         phaseStatus: status,
         monotonicPhase: status.currentPhase,
         solvedSlots: status.solvedSlots,
@@ -154,11 +166,21 @@ export const useCubeStore = create<CubeStoreState>((set, get) => ({
   },
 
   applyMove: (move: string, timestamp: number = Date.now()) => {
-    const { pattern, monotonicPhase, solvedSlots, moveHistory, visualAlg, solveTracker } = get();
+    const { pattern, monotonicPhase, solvedSlots, moveHistory, visualAlg, solveTracker, physicalPattern } = get();
     if (!pattern) return;
 
     try {
       const nextPattern = pattern.applyAlg(new Alg(move));
+      // Keep the physical-cube model in step with every real turn (raw frame). Never
+      // reset by setScramble — see the `physicalPattern` field doc.
+      let nextPhysicalPattern = physicalPattern;
+      if (physicalPattern) {
+        try {
+          nextPhysicalPattern = physicalPattern.applyAlg(new Alg(move));
+        } catch {
+          // leave physicalPattern as-is on an unparseable move
+        }
+      }
       const nextStatus = evaluateCFOPFromPattern(nextPattern);
 
       const lastTimestamp = moveHistory.length > 0 ? moveHistory[moveHistory.length - 1].timestamp : timestamp;
@@ -215,6 +237,7 @@ export const useCubeStore = create<CubeStoreState>((set, get) => ({
         solvedSlots: resolved.solvedSlots,
         visualAlg: visualAlg ? `${visualAlg} ${move}` : move,
         solveTracker: nextSolveTracker,
+        physicalPattern: nextPhysicalPattern,
       });
     } catch (err) {
       console.warn(`Failed to apply move '${move}' to store pattern:`, err);
@@ -286,6 +309,8 @@ export const useCubeStore = create<CubeStoreState>((set, get) => ({
       const status = evaluateCFOPFromPattern(pattern);
       set({
         pattern,
+        // "Calibrate Solved" asserts the physical cube is in the solved state.
+        physicalPattern: pattern,
         lastMove: null,
         moveHistory: [],
         phaseStatus: status,

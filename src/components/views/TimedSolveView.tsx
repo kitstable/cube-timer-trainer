@@ -136,12 +136,12 @@ export const TimedSolveView: React.FC = () => {
       </div>
 
       {/* 3D Cube Visualizer Card */}
-      <div className="bg-[var(--surface)] border border-[var(--border)] rounded-2xl p-2 mb-2 flex items-center justify-center min-h-[190px] relative">
+      <div className="bg-[var(--surface)] border border-[var(--border)] rounded-2xl p-2 mb-2 flex items-center justify-center min-h-[225px] relative">
         <TwistyPlayerWrapper
           setupAlg={setupAlg}
           alg={displayAlg}
           tempoScale={3}
-          height={180}
+          height={215}
         />
         {smartCube.isConnected && (
           <div className="absolute top-2.5 left-2.5 px-2 py-0.5 rounded-md bg-[var(--surface-2)]/90 border border-[var(--border)] text-[10px] font-mono text-[var(--green)] flex items-center gap-1.5 backdrop-blur-xs">

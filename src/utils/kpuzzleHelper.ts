@@ -7,7 +7,7 @@ let cachedDefaultPattern: KPattern | null = null;
 let cachedPostZ2Pattern: KPattern | null = null;
 let cachedSolvedPatterns: KPattern[] = [];
 
-const WHOLE_CUBE_ROTATIONS = [
+export const WHOLE_CUBE_ROTATIONS = [
   '', 'y', "y'", 'y2',
   'x', 'x y', 'x y2', "x y'",
   "x'", "x' y", "x' y2", "x' y'",

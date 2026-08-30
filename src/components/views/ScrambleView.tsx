@@ -5,6 +5,7 @@ import { useAppStore } from '../../store/useAppStore';
 import { useCubeStore } from '../../store/useCubeStore';
 import { useSolverWorker } from '../../hooks/useSolverWorker';
 import { getMoveDescription } from '../../utils/constants';
+import { isPatternSolved } from '../../utils/kpuzzleHelper';
 
 export const ScrambleView: React.FC = () => {
   const {
@@ -25,7 +26,7 @@ export const ScrambleView: React.FC = () => {
     resetPhysicalScramble,
   } = useAppStore();
 
-  const { smartCube, visualAlg, setScramble: setCubeStoreScramble } = useCubeStore();
+  const { smartCube, visualAlg, physicalPattern, setScramble: setCubeStoreScramble } = useCubeStore();
   const { generateScramble, isReady } = useSolverWorker();
   const [isGenerating, setIsGenerating] = useState(false);
   const [isAutoAdvancing, setIsAutoAdvancing] = useState(false);
@@ -75,9 +76,12 @@ export const ScrambleView: React.FC = () => {
   // guidance runs off `scrambleRemainingMoves`, not the manual progress index.
   const connected = smartCube.isConnected;
   const physicalVisual = connected && visualAlg.length > 0;
-  // Cube connected mid-scramble (or before returning to solved): visualAlg is populated
-  // but no scramble turn has committed yet.
-  const awaitingSolved = connected && physicalVisual && scrambleDoneMoves.length === 0;
+  // The guided scramble only makes sense starting from a solved cube. If the connected
+  // cube isn't solved yet (e.g. connected scrambled and routed through Timed, then
+  // switched here), hold in "return to solved" until it is — physical turns are ignored
+  // by the tracker until then (see useSmartCube.ts).
+  const isPhysicalSolved = physicalPattern ? isPatternSolved(physicalPattern) : true;
+  const awaitingSolved = connected && !isPhysicalSolved && scrambleDoneMoves.length === 0;
   const feedbackKind = scrambleFeedback?.kind ?? null;
   const correctionCount = scrambleFeedback?.corrections.length ?? 0;
 
@@ -143,7 +147,7 @@ export const ScrambleView: React.FC = () => {
 
       {/* 3D Cube Card - mirrors the physical cube when connected, else steps through the scramble */}
       <div
-        className={`bg-[var(--surface)] border border-[var(--border)] rounded-2xl p-3 mb-3 flex flex-col items-center justify-center min-h-[260px] relative transition-shadow duration-300 ${
+        className={`bg-[var(--surface)] border border-[var(--border)] rounded-2xl p-3 mb-3 flex flex-col items-center justify-center min-h-[225px] relative transition-shadow duration-300 ${
           feedbackKind === 'error'
             ? 'ring-2 ring-[var(--red)] shadow-[0_0_0_4px_rgba(200,16,46,0.28)]'
             : feedbackKind === 'partial'
@@ -156,7 +160,7 @@ export const ScrambleView: React.FC = () => {
             setupAlg=""
             alg={cubeAlg}
             tempoScale={2}
-            height={250}
+            height={215}
           />
         ) : (
           <div className="flex items-center justify-center text-sm text-[var(--text-muted)]">

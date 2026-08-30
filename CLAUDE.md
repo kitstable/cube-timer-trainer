@@ -99,6 +99,15 @@ is local. Installable PWA via `vite-plugin-pwa`.
    `syncPatternAndRoute` distinguishes "we really read your cube" from "we don't know"
    (`SmartCubeState.stateReadSupported`) and surfaces the unknown case in the connection
    modal instead of faking a routing decision.
+   - **Still-manual on connect (known, not auto-fixed):** on connecting an already-scrambled
+     cube the initial `getPattern()` reads as solved (the driver reports an assumed-solved
+     state until the cube is turned / its real facelet snapshot arrives), so the app routes
+     to Scramble and the user has to trigger a resync. A poll-until-settled retry loop was
+     tried (`readSettledPattern`) and did **not** help — reverted. Current answer is a
+     manual **resync button in the header** (`Header.tsx`, shown only while connected, calls
+     `useSmartCube().resyncFromCube`) so it's one tap, not open-modal-then-tap. A real
+     auto-fix probably needs to listen for a full-state/facelet event from the driver
+     rather than polling `getPattern()`.
 2. **Timed Solve's 3D visualizer now mirrors the live cube.** It used to compose
    `setupAlg` from `useAppStore.currentScramble` (only ever set by generating a scramble via
    the Scramble page) + `alg` from `moveHistory`. Connecting a cube that was already
@@ -109,6 +118,21 @@ is local. Installable PWA via `vite-plugin-pwa`.
    `reconstructAlgForPattern` (solves the just-read pattern, inverts the result) whenever a
    fresh physical read succeeds. Routed through the existing solver worker, not called from
    the main thread.
+   - **Frame follow-up (later fix):** `reconstructAlgForPattern` originally copied the z2
+     dance from `solvePhasePrefix` (`pattern.applyAlg('z2')` before the solver, relabel
+     after), which threw "non-oriented puzzles are not supported" and left `visualAlg` `''`
+     (→ Timed/Scramble showed a solved cube). The catch: `experimentalSolve3x3x3IgnoringCenters`
+     rejects *any* pattern whose centers aren't solved, and `puzzle.getPattern()` is
+     facelet-derived in whatever whole-cube orientation that cube's calibration uses —
+     usually the library default, but some report it z2-rotated or otherwise turned, and a
+     fixed z2 (or no z2) is only ever right for one of those. Fix: `reconstructAlgForPattern`
+     first finds the whole-cube rotation `rot` that lands the *centers* solved (cheap
+     `CENTERS.pieces` check over `WHOLE_CUBE_ROTATIONS`, no solve), solves `pattern·rot`
+     once (S), and returns `X = (rot · S)⁻¹` so `solved·X` is exactly `pattern` — the
+     visualizer shows the cube as its sensor reports it and appended physical moves stay
+     consistent. Verified for default / z2 / y / z' framings in `fullSolveFallback.test.ts`.
+     `solvePhasePrefix` is untouched — its input genuinely is the app's post-z2 frame, so
+     it keeps its single fixed z2 dance.
 
 Both are on `claude/smart-cube-connection-state-rs2s9a`.
 
@@ -127,6 +151,15 @@ Both are on `claude/smart-cube-connection-state-rs2s9a`.
    `KPattern`, so the z2 gotchas don't apply; completion is `nextRemaining.length === 0`,
    never a `pattern` check (in connected scramble mode `pattern` is the z2'd *target* with
    raw physical moves layered on top and is meaningless).
+   - **Only tracks from a solved cube (later fix):** the tracker is pure move algebra that
+     *assumes* it starts from solved, so turning a still-scrambled cube (connect scrambled →
+     route to Timed → switch to Scramble) used to feed it junk. `useCubeStore.physicalPattern`
+     (raw frame, seeded by every `getPattern()` read, advanced by every turn, never reset by
+     `setScramble`) is now the "is the physical cube actually solved?" source of truth.
+     `useSmartCube.ts` only feeds a turn to `scramblePartialGate` when the cube was solved
+     *before* that turn (or tracking already started, `scrambleDoneMoves.length > 0`), and
+     `ScrambleView`'s `awaitingSolved` ("Return your cube to the solved state") is driven off
+     `isPatternSolved(physicalPattern)` rather than a `visualAlg`-length proxy.
 
 4. **Guided scramble absorbs half-finished double turns.** A physical `R2` arrives as two
    separate `R` quarter-turn events (GAN/QiYi never emit doubles), so the first `R` used to
@@ -214,7 +247,17 @@ way:
    just takes a name — technique tier and notation mode are single global preferences
    (`useAppStore`), not asked for and not per-profile. Worth deciding whether that's fine as
    a global setting or should become part of profile creation.
-6. **Some duplicated/vestigial pieces from incremental work:**
+6. **Per-move data isn't persisted with a solve.** `Solve` records keep phase splits and
+   aggregate telemetry but not the move stream itself, so History can't show a full
+   reconstruction / move-by-move replay. The data exists at save time
+   (`solveTracker.moveHistory` in `useTimer.ts`, `TimestampedMove[]`). Sizing is not a
+   blocker (~50–60 moves/solve; a compact `moves` string + `deltaMs: number[]`, dropping the
+   redundant absolute `timestamp` and the derivable `phase`, is ~1 KB/solve). The one
+   caveat: `getSolvesByProfile` loads every solve for the profile on each History/stats
+   render, so the move blob should live in a **separate Dexie table** keyed by solve id
+   (`db.version(2)`, additive — no data migration), fetched only when a solve detail view
+   opens. Populated for smart-cube solves only.
+7. **Some duplicated/vestigial pieces from incremental work:**
    - `src/components/ui/MoveRibbon.tsx` is unused — `GuidedSolveView` and `ScrambleView`
      each hand-roll their own near-identical move-chip ribbon inline instead.
    - `ALL_F2L_SLOTS` is defined twice (`src/utils/constants.ts` and

@@ -2,6 +2,7 @@ import type { KPattern } from 'cubing/kpuzzle';
 import { Alg } from 'cubing/alg';
 import { experimentalSolve3x3x3IgnoringCenters } from 'cubing/search';
 import { simplifyMoveSequence } from '../utils/moveSimplifier';
+import { WHOLE_CUBE_ROTATIONS } from '../utils/kpuzzleHelper';
 import {
   isCrossSolved,
   isSlotSolved,
@@ -69,22 +70,46 @@ export async function solvePhasePrefix(
 }
 
 /**
- * Computes an alg that reconstructs `pattern` from a solved cube, expressed in
- * `pattern`'s own (unrotated) move-letter frame.
+ * Computes an alg `X` such that `solved.applyAlg(X)` is exactly `pattern` — i.e. the moves
+ * that reconstruct a live physical cube state from solved, for 3D visualization when the
+ * app has only a `KPattern` read off a smart cube and no scramble string that produced it.
  *
- * Used for 3D visualization when the app only has a live physical KPattern (e.g. read
- * directly off a smart cube) and no known scramble string that produced it — solving the
- * pattern gives a sequence that reaches solved, so its inverse (reversed and each move
- * inverted) reaches `pattern` starting from solved.
+ * The wrinkle: `experimentalSolve3x3x3IgnoringCenters` rejects any pattern whose centers
+ * aren't solved ("non-oriented puzzles are not supported"), and different smart-cube
+ * calibrations hand back `getPattern()` in different whole-cube orientations — usually the
+ * library default (facelet-derived, solved centers), but sometimes z2-rotated or otherwise
+ * turned. So first find the whole-cube rotation `rot` that lands the *centers* solved (a
+ * cheap permutation check, no solve), then solve `pattern · rot` once (S). Then
+ * `X = (rot · S)⁻¹` because `pattern · rot · S = solved`. The result carries any needed
+ * `rot⁻¹`, so the visualizer shows the cube exactly as its sensor reports it and appended
+ * physical moves stay consistent. Returns `''` if no rotation solves the centers.
  */
-export async function reconstructAlgForPattern(pattern: KPattern): Promise<string> {
-  const solution = await experimentalSolve3x3x3IgnoringCenters(pattern.applyAlg(new Alg('z2')));
-  const movesToSolve = Array.from(solution.experimentalLeafMoves()).map((m) => {
-    const s = m.toString();
-    return (Z2_RELABEL[s[0]] ?? s[0]) + s.slice(1);
-  });
+function centersSolved(pattern: KPattern): boolean {
+  const c = pattern.patternData.CENTERS;
+  if (!c) return true; // puzzle without a CENTERS orbit — nothing to normalise
+  return c.pieces.every((p: number, i: number) => p === i);
+}
 
-  if (movesToSolve.length === 0) return '';
-  return new Alg(movesToSolve.join(' ')).invert().toString();
+export async function reconstructAlgForPattern(pattern: KPattern): Promise<string> {
+  let rot = '';
+  if (!centersSolved(pattern)) {
+    rot =
+      WHOLE_CUBE_ROTATIONS.find(
+        (r) => r !== '' && centersSolved(pattern.applyAlg(new Alg(r)))
+      ) ?? '';
+    if (rot === '') return ''; // no orientation solves the centers — give up cleanly
+  }
+
+  const rotated = rot ? pattern.applyAlg(new Alg(rot)) : pattern;
+  let solution;
+  try {
+    solution = await experimentalSolve3x3x3IgnoringCenters(rotated);
+  } catch {
+    return '';
+  }
+  const moves = Array.from(solution.experimentalLeafMoves()).map((m) => m.toString());
+  const combined = [...(rot ? [rot] : []), ...moves].join(' ').trim();
+  if (!combined) return '';
+  return new Alg(combined).invert().toString();
 }
 

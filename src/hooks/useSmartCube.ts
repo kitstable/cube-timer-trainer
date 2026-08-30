@@ -158,14 +158,24 @@ export function useSmartCube() {
           ? leafEvent.timeStamp
           : Date.now();
 
+        // Snapshot whether the physical cube was solved *before* this turn — the guided
+        // scramble is only meaningful when it starts from a solved cube.
+        const physicalBefore = useCubeStore.getState().physicalPattern;
+        const wasSolvedBeforeMove = physicalBefore ? isPatternSolved(physicalBefore) : true;
+
         // Dispatch move directly to store — every physical turn updates ground truth.
         applyMove(moveStr, timestamp);
 
         // In Scramble mode, feed every turn to the guided-scramble tracker: it advances
         // on the expected move, absorbs same-face partials, and prepends correction
-        // moves for wrong turns (see utils/scrambleTracker.ts).
-        const { activeMode, scrambleMoves } = useAppStore.getState();
-        if (activeMode === 'scramble' && scrambleMoves.length > 0) {
+        // moves for wrong turns (see utils/scrambleTracker.ts). But don't start tracking
+        // until the cube is actually solved — otherwise turning a still-scrambled cube
+        // (e.g. after connecting scrambled and routing through Timed) processes junk moves.
+        const { activeMode, scrambleMoves, scrambleDoneMoves } = useAppStore.getState();
+        // `hasHeld()` — a partial from move #1 is mid-grace-window; its second quarter-turn
+        // must still reach the gate so a leading double turn resolves cleanly.
+        const armed = scrambleDoneMoves.length > 0 || wasSolvedBeforeMove || scramblePartialGate.hasHeld();
+        if (activeMode === 'scramble' && scrambleMoves.length > 0 && armed) {
           scramblePartialGate.feed(moveStr);
         }
       });
