@@ -237,8 +237,19 @@ export function useSmartCube() {
   }, [setSmartCubeState]);
 
   const resyncFromCube = useCallback(async () => {
-    if (!activeSmartPuzzle) return;
+    if (!activeSmartPuzzle) {
+      console.warn('Smart cube: no active BLE connection found.');
+      setSmartCubeState({ isConnected: false, isConnecting: false });
+      return;
+    }
     await syncPatternAndRoute(activeSmartPuzzle, { syncPhysicalPattern, setSmartCubeState, setMode, setVisualAlg, reconstructAlg });
+
+    const { pattern, physicalPattern } = useCubeStore.getState();
+    const isSolved = physicalPattern ? isPatternSolved(physicalPattern) : (pattern ? isPatternSolved(pattern) : false);
+    if (isSolved) {
+      useAppStore.getState().resetPhysicalScramble();
+      scramblePartialGate.reset();
+    }
   }, [syncPhysicalPattern, setSmartCubeState, setMode, setVisualAlg, reconstructAlg]);
 
   return {
@@ -248,3 +259,4 @@ export function useSmartCube() {
     hasActiveConnection: () => Boolean(activeSmartPuzzle),
   };
 }
+

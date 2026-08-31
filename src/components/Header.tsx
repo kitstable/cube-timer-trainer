@@ -17,14 +17,34 @@ export const Header: React.FC<HeaderProps> = ({
   children,
 }) => {
   const { smartCube } = useCubeStore();
-  const { resyncFromCube } = useSmartCube();
+  const { resyncFromCube, hasActiveConnection } = useSmartCube();
   const [isSyncing, setIsSyncing] = useState(false);
 
   const handleSync = async () => {
     if (isSyncing) return;
+
+    // If BLE reference was lost or disconnected, open modal to reconnect
+    if (!hasActiveConnection()) {
+      onOpenConnectionModal();
+      return;
+    }
+
+    // If cube protocol doesn't support reading physical state over GATT, open modal for manual calibration
+    if (!smartCube.stateReadSupported) {
+      onOpenConnectionModal();
+      return;
+    }
+
     setIsSyncing(true);
     try {
-      await resyncFromCube();
+      await Promise.all([
+        resyncFromCube(),
+        new Promise((resolve) => setTimeout(resolve, 400)),
+      ]);
+
+      if (!useCubeStore.getState().smartCube.stateReadSupported) {
+        onOpenConnectionModal();
+      }
     } finally {
       setIsSyncing(false);
     }
