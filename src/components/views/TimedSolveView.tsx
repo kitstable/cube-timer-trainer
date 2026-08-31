@@ -26,7 +26,7 @@ export const TimedSolveView: React.FC = () => {
     handleHoldRelease,
   } = useTimer();
 
-  const { monotonicPhase: rawMonotonicPhase, smartCube, moveHistory, phaseStatus, visualAlg, solveTracker, lastMoveTimestamp, setScramble: setCubeStoreScramble } = useCubeStore();
+  const { monotonicPhase: rawMonotonicPhase, smartCube, moveHistory, visualAlg, solveTracker, lastMoveTimestamp, setScramble: setCubeStoreScramble } = useCubeStore();
   // During a connected solve the dedicated CFOP tracker holds the correct live phase.
   const monotonicPhase = solveTracker.active ? solveTracker.monotonicPhase : rawMonotonicPhase;
   const { currentProfileId, currentScramble, setMode, setScramble } = useAppStore();
@@ -91,31 +91,23 @@ export const TimedSolveView: React.FC = () => {
   const formattedSolveTime = formatTime(elapsedMs);
   const formattedInspection = (inspectionRemainingMs / 1000).toFixed(1);
 
-  // After a completed solve, jump back to Scramble for a fresh scramble when the cube is
-  // (or was tracked as) solved — a connected solve that finished, or a solved raw pattern.
-  const backToScramble =
-    timerState === 'completed' &&
-    (Boolean(lastCompletedSolve?.cubeConnected) || phaseStatus.isFullySolved);
-
   // "Next Scramble": generate a fresh WCA scramble, seed both stores, then jump to the
   // Scramble tab. Without regenerating here, ScrambleView mounts still holding the just-
   // solved scramble (already marked complete) and never produces a new one.
   const handleCompletedCta = async () => {
-    if (!backToScramble) {
-      resetTimer();
-      return;
-    }
     setIsPreparingScramble(true);
     try {
       const res = await generateScramble();
       setScramble(res.scramble, res.moves);
       await setCubeStoreScramble(res.scramble);
-    } catch (err) {
-      console.error('Failed to generate next scramble:', err);
-    } finally {
-      setIsPreparingScramble(false);
       resetTimer();
       setMode('scramble');
+    } catch (err) {
+      console.error('Failed to generate next scramble:', err);
+      resetTimer();
+      setMode('scramble');
+    } finally {
+      setIsPreparingScramble(false);
     }
   };
 
@@ -143,10 +135,22 @@ export const TimedSolveView: React.FC = () => {
   return (
     <div
       className="flex flex-col lg:grid lg:grid-cols-12 lg:gap-8 flex-1 pb-4 select-none"
-      onMouseDown={handleHoldStart}
-      onMouseUp={handleHoldRelease}
-      onTouchStart={handleHoldStart}
-      onTouchEnd={handleHoldRelease}
+      onMouseDown={(e) => {
+        if ((e.target as HTMLElement).closest('button, a, input, [role="button"]')) return;
+        handleHoldStart();
+      }}
+      onMouseUp={(e) => {
+        if ((e.target as HTMLElement).closest('button, a, input, [role="button"]')) return;
+        handleHoldRelease();
+      }}
+      onTouchStart={(e) => {
+        if ((e.target as HTMLElement).closest('button, a, input, [role="button"]')) return;
+        handleHoldStart();
+      }}
+      onTouchEnd={(e) => {
+        if ((e.target as HTMLElement).closest('button, a, input, [role="button"]')) return;
+        handleHoldRelease();
+      }}
     >
       {/* Mobile Title Bar */}
       <div className="flex lg:hidden mb-2 items-center justify-between">
@@ -293,6 +297,8 @@ export const TimedSolveView: React.FC = () => {
                 e.stopPropagation();
                 stopTimer();
               }}
+              onMouseDown={(e) => e.stopPropagation()}
+              onTouchStart={(e) => e.stopPropagation()}
               className="w-full py-4 rounded-xl font-heading font-semibold text-[15px] bg-[var(--red)] text-white hover:opacity-90 active:scale-[0.99] transition-all flex items-center justify-center gap-2 cursor-pointer shadow-md"
             >
               <Square className="w-4 h-4 fill-current" />
@@ -304,17 +310,13 @@ export const TimedSolveView: React.FC = () => {
                 e.stopPropagation();
                 if (!isPreparingScramble) handleCompletedCta();
               }}
+              onMouseDown={(e) => e.stopPropagation()}
+              onTouchStart={(e) => e.stopPropagation()}
               disabled={isPreparingScramble}
               className="w-full py-3.5 rounded-xl font-heading font-semibold text-[15px] bg-[var(--white)] text-[var(--bg)] hover:opacity-90 active:scale-[0.99] transition-all flex items-center justify-center gap-2 cursor-pointer shadow-sm disabled:opacity-60"
             >
               <RotateCcw className={`w-4 h-4 ${isPreparingScramble ? 'animate-spin' : ''}`} />
-              <span>
-                {isPreparingScramble
-                  ? 'Generating…'
-                  : backToScramble
-                  ? 'Next Scramble'
-                  : 'New Solve'}
-              </span>
+              <span>{isPreparingScramble ? 'Generating…' : 'Next Scramble'}</span>
             </button>
           ) : (
             <button
@@ -323,6 +325,8 @@ export const TimedSolveView: React.FC = () => {
                 if (timerState === 'idle') startInspection();
                 else if (timerState === 'inspection') startSolve();
               }}
+              onMouseDown={(e) => e.stopPropagation()}
+              onTouchStart={(e) => e.stopPropagation()}
               className="w-full py-3.5 rounded-xl font-heading font-semibold text-[15px] bg-[var(--white)] text-[var(--bg)] hover:opacity-90 active:scale-[0.99] transition-all flex items-center justify-center gap-2 cursor-pointer shadow-sm"
             >
               <Play className="w-4 h-4 fill-current" />
