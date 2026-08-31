@@ -10,7 +10,7 @@ import { readActiveSmartCubePattern } from './useSmartCube';
 import type { Solve } from '../types/db';
 import type { CFOPPhase } from '../types/cube';
 
-export type TimerState = 'idle' | 'holding' | 'ready' | 'inspection' | 'running' | 'completed';
+export type TimerState = 'idle' | 'holding' | 'ready' | 'inspection' | 'running' | 'paused' | 'completed';
 
 export function useTimer() {
   const [timerState, setTimerState] = useState<TimerState>('idle');
@@ -33,6 +33,7 @@ export function useTimer() {
 
   const startTimestampRef = useRef<number>(0);
   const inspectionStartRef = useRef<number>(0);
+  const pauseStartRef = useRef<number>(0);
   const animFrameRef = useRef<number | null>(null);
   const holdTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const lastProcessedMoveTsRef = useRef<number>(0);
@@ -53,6 +54,7 @@ export function useTimer() {
 
     const now = performance.now();
     startTimestampRef.current = now;
+    pauseStartRef.current = 0;
     currentPhaseRef.current = 'cross';
     phaseTimingsRef.current = [{ phase: 'cross', start: now, end: now }];
 
@@ -64,12 +66,97 @@ export function useTimer() {
     setTimerState('running');
   }, [resetSolveTracking]);
 
-  const stopTimer = useCallback(async () => {
+  const pauseTimer = useCallback(() => {
     if (timerState !== 'running') return;
+    if (animFrameRef.current) {
+      cancelAnimationFrame(animFrameRef.current);
+      animFrameRef.current = null;
+    }
+
+    const now = performance.now();
+    pauseStartRef.current = now;
+    const currentElapsed = Math.round(now - startTimestampRef.current);
+    setElapsedMs(currentElapsed);
+    setTimerState('paused');
+  }, [timerState]);
+
+  const resumeTimer = useCallback(() => {
+    if (timerState !== 'paused') return;
+
+    const now = performance.now();
+    const pausedDuration = pauseStartRef.current > 0 ? now - pauseStartRef.current : 0;
+    startTimestampRef.current += pausedDuration;
+    pauseStartRef.current = 0;
+    setTimerState('running');
+  }, [timerState]);
+
+  const saveDnfSolve = useCallback(async () => {
+    if (timerState !== 'paused' && timerState !== 'running') return;
+    if (animFrameRef.current) {
+      cancelAnimationFrame(animFrameRef.current);
+      animFrameRef.current = null;
+    }
+
+    const finalSolveTimeMs = elapsedMs;
+    setTimerState('completed');
+
+    const inspectionDuration =
+      inspectionStartRef.current > 0 ? Math.round(startTimestampRef.current - inspectionStartRef.current) : 0;
+
+    const tracker = useCubeStore.getState().solveTracker;
+    const moves =
+      tracker.active && tracker.moveHistory.length > 0
+        ? tracker.moveHistory
+        : useCubeStore.getState().moveHistory;
+    const isCubeConnected = smartCube.isConnected;
+    endSolveTracking();
+
+    const telemetry = calculateSolveTelemetry(
+      inspectionDuration,
+      moves,
+      finalSolveTimeMs,
+      isCubeConnected
+    );
+
+    try {
+      const record = await saveSolve({
+        profileId: currentProfileId,
+        scrambleMoves,
+        mode: 'timed',
+        cubeConnected: isCubeConnected,
+        phases: telemetry.phases,
+        totalTimeMs: finalSolveTimeMs,
+        totalMoves: telemetry.totalMoves,
+        overallTps: telemetry.overallTps,
+        dnf: true,
+      });
+
+      setLastCompletedSolve(record);
+    } catch (err) {
+      console.error('Failed to save DNF solve record:', err);
+    }
+  }, [timerState, elapsedMs, smartCube.isConnected, currentProfileId, scrambleMoves, endSolveTracking]);
+
+  const discardSolve = useCallback(() => {
+    if (animFrameRef.current) {
+      cancelAnimationFrame(animFrameRef.current);
+      animFrameRef.current = null;
+    }
+    endSolveTracking();
+    resetSolveTracking();
+    setTimerState('idle');
+    setElapsedMs(0);
+    setInspectionRemainingMs(15000);
+    inspectionStartRef.current = 0;
+    pauseStartRef.current = 0;
+  }, [endSolveTracking, resetSolveTracking]);
+
+  const stopTimer = useCallback(async () => {
+    if (timerState !== 'running' && timerState !== 'paused') return;
     if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
 
     const endNow = performance.now();
-    const finalSolveTimeMs = Math.round(endNow - startTimestampRef.current);
+    const finalSolveTimeMs = timerState === 'paused' ? elapsedMs : Math.round(endNow - startTimestampRef.current);
     setElapsedMs(finalSolveTimeMs);
     setTimerState('completed');
 
@@ -116,7 +203,7 @@ export function useTimer() {
     } catch (err) {
       console.error('Failed to save solve record:', err);
     }
-  }, [timerState, smartCube.isConnected, currentProfileId, scrambleMoves, endSolveTracking]);
+  }, [timerState, elapsedMs, smartCube.isConnected, currentProfileId, scrambleMoves, endSolveTracking]);
 
   const resetTimer = useCallback(() => {
     if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
@@ -124,6 +211,7 @@ export function useTimer() {
     setElapsedMs(0);
     setInspectionRemainingMs(15000);
     inspectionStartRef.current = 0;
+    pauseStartRef.current = 0;
   }, []);
 
   // Entering Timed mode with a connected cube: ignore any turns made before now (e.g.
@@ -252,8 +340,16 @@ export function useTimer() {
 
   // Handle Spacebar & Touch Hold-to-Start interactions
   const handleHoldStart = useCallback(() => {
+    if (timerState === 'paused') {
+      return;
+    }
+
     if (timerState === 'running') {
-      stopTimer();
+      if (smartCube.isConnected) {
+        pauseTimer();
+      } else {
+        stopTimer();
+      }
       return;
     }
 
@@ -273,9 +369,13 @@ export function useTimer() {
         setTimerState('ready');
       }, 300); // 300ms hold to turn green/ready
     }
-  }, [timerState, stopTimer, resetTimer, startInspection]);
+  }, [timerState, smartCube.isConnected, pauseTimer, stopTimer, resetTimer, startInspection]);
 
   const handleHoldRelease = useCallback(() => {
+    if (timerState === 'paused') {
+      return;
+    }
+
     if (holdTimeoutRef.current) {
       clearTimeout(holdTimeoutRef.current);
       holdTimeoutRef.current = null;
@@ -296,6 +396,10 @@ export function useTimer() {
     startInspection,
     startSolve,
     stopTimer,
+    pauseTimer,
+    resumeTimer,
+    saveDnfSolve,
+    discardSolve,
     resetTimer,
     handleHoldStart,
     handleHoldRelease,

@@ -67,7 +67,7 @@ export function computeAverage(times: number[]): number | null {
 export function calculateSessionStats(solves: Solve[]): SessionStats {
   const validSolves = solves.filter((s) => !s.dnf);
   if (validSolves.length === 0) {
-    return { count: 0, best: null, worst: null, ao5: null, ao12: null, mean: null };
+    return { count: solves.length, best: null, worst: null, ao5: null, ao12: null, mean: null };
   }
 
   const times = validSolves.map((s) => s.totalTimeMs);
@@ -84,7 +84,7 @@ export function calculateSessionStats(solves: Solve[]): SessionStats {
   const ao12 = latest12.length === 12 ? computeAverage(latest12) : null;
 
   return {
-    count: validSolves.length,
+    count: solves.length,
     best,
     worst,
     ao5,

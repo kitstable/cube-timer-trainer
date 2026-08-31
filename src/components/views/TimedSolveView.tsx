@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useMemo } from 'react';
 import { Play, Square, RotateCcw } from 'lucide-react';
 import { TwistyPlayerWrapper } from '../TwistyPlayerWrapper';
+import { StopSolveModal } from '../StopSolveModal';
 import { useTimer } from '../../hooks/useTimer';
 import { useSolverWorker } from '../../hooks/useSolverWorker';
 import { useCubeStore } from '../../store/useCubeStore';
@@ -20,7 +21,10 @@ export const TimedSolveView: React.FC = () => {
     lastCompletedSolve,
     startInspection,
     startSolve,
-    stopTimer,
+    pauseTimer,
+    resumeTimer,
+    saveDnfSolve,
+    discardSolve,
     resetTimer,
     handleHoldStart,
     handleHoldRelease,
@@ -67,6 +71,7 @@ export const TimedSolveView: React.FC = () => {
   // Spacebar hotkey handler
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      if (timerState === 'paused') return;
       if (e.code === 'Space' && !e.repeat) {
         e.preventDefault();
         handleHoldStart();
@@ -74,6 +79,7 @@ export const TimedSolveView: React.FC = () => {
     };
 
     const handleKeyUp = (e: KeyboardEvent) => {
+      if (timerState === 'paused') return;
       if (e.code === 'Space') {
         e.preventDefault();
         handleHoldRelease();
@@ -86,7 +92,7 @@ export const TimedSolveView: React.FC = () => {
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
     };
-  }, [handleHoldStart, handleHoldRelease]);
+  }, [handleHoldStart, handleHoldRelease, timerState]);
 
   const formattedSolveTime = formatTime(elapsedMs);
   const formattedInspection = (inspectionRemainingMs / 1000).toFixed(1);
@@ -127,28 +133,40 @@ export const TimedSolveView: React.FC = () => {
   } else if (timerState === 'running') {
     phaseStatusLabel = `solving — ${PHASE_DISPLAY_NAMES[monotonicPhase]?.toLowerCase() || monotonicPhase}`;
     timerTextColor = 'text-[var(--text)]';
+  } else if (timerState === 'paused') {
+    phaseStatusLabel = 'Solve paused';
+    timerTextColor = 'text-[var(--orange)]';
   } else if (timerState === 'completed') {
-    phaseStatusLabel = 'Solve completed';
-    timerTextColor = 'text-[var(--green)]';
+    if (lastCompletedSolve?.dnf) {
+      phaseStatusLabel = 'Solve DNF';
+      timerTextColor = 'text-[var(--red)]';
+    } else {
+      phaseStatusLabel = 'Solve completed';
+      timerTextColor = 'text-[var(--green)]';
+    }
   }
 
   return (
     <div
       className="flex flex-col lg:grid lg:grid-cols-12 lg:gap-8 flex-1 pb-4 select-none"
       onMouseDown={(e) => {
-        if ((e.target as HTMLElement).closest('button, a, input, [role="button"]')) return;
+        if (timerState === 'paused') return;
+        if ((e.target as HTMLElement).closest('button, a, input, [role="button"], [role="dialog"]')) return;
         handleHoldStart();
       }}
       onMouseUp={(e) => {
-        if ((e.target as HTMLElement).closest('button, a, input, [role="button"]')) return;
+        if (timerState === 'paused') return;
+        if ((e.target as HTMLElement).closest('button, a, input, [role="button"], [role="dialog"]')) return;
         handleHoldRelease();
       }}
       onTouchStart={(e) => {
-        if ((e.target as HTMLElement).closest('button, a, input, [role="button"]')) return;
+        if (timerState === 'paused') return;
+        if ((e.target as HTMLElement).closest('button, a, input, [role="button"], [role="dialog"]')) return;
         handleHoldStart();
       }}
       onTouchEnd={(e) => {
-        if ((e.target as HTMLElement).closest('button, a, input, [role="button"]')) return;
+        if (timerState === 'paused') return;
+        if ((e.target as HTMLElement).closest('button, a, input, [role="button"], [role="dialog"]')) return;
         handleHoldRelease();
       }}
     >
@@ -234,7 +252,7 @@ export const TimedSolveView: React.FC = () => {
             className={`font-mono text-xs tracking-wider uppercase mb-2 font-medium transition-colors ${
               timerState === 'running'
                 ? 'text-[var(--green)]'
-                : timerState === 'inspection'
+                : timerState === 'inspection' || timerState === 'paused'
                 ? 'text-[var(--orange)]'
                 : 'text-[var(--text-muted)]'
             }`}
@@ -245,6 +263,13 @@ export const TimedSolveView: React.FC = () => {
           <div className={`font-mono text-5xl lg:text-7xl font-medium tracking-tight font-tabular transition-colors ${timerTextColor}`}>
             {timerState === 'inspection' ? (
               <span>{formattedInspection}</span>
+            ) : lastCompletedSolve?.dnf && timerState === 'completed' ? (
+              <div className="flex flex-col items-center">
+                <span className="text-[var(--red)] font-bold text-5xl lg:text-7xl">DNF</span>
+                <span className="text-sm lg:text-base text-[var(--text-muted)] font-mono mt-1 font-tabular">
+                  ({formattedSolveTime.seconds}.{formattedSolveTime.millis}s)
+                </span>
+              </div>
             ) : (
               <>
                 {formattedSolveTime.seconds}.
@@ -291,11 +316,13 @@ export const TimedSolveView: React.FC = () => {
 
         {/* Bottom CTA Button */}
         <div className="mt-auto pt-2">
-          {timerState === 'running' ? (
+          {timerState === 'running' || timerState === 'paused' ? (
             <button
               onClick={(e) => {
                 e.stopPropagation();
-                stopTimer();
+                if (timerState === 'running') {
+                  pauseTimer();
+                }
               }}
               onMouseDown={(e) => e.stopPropagation()}
               onTouchStart={(e) => e.stopPropagation()}
@@ -335,6 +362,14 @@ export const TimedSolveView: React.FC = () => {
           )}
         </div>
       </div>
+
+      {/* Stop Solve / DNF Prompt Modal */}
+      <StopSolveModal
+        isOpen={timerState === 'paused'}
+        onSaveDnf={saveDnfSolve}
+        onDiscard={discardSolve}
+        onCancel={resumeTimer}
+      />
     </div>
   );
 };

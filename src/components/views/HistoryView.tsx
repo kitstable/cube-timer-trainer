@@ -113,15 +113,33 @@ export const HistoryView: React.FC = () => {
                 <div className="text-[10px] text-[var(--text-muted)] uppercase tracking-wider mb-0.5">
                   Total Time
                 </div>
-                <div className="font-mono text-3xl font-bold font-tabular text-[var(--text)]">
-                  {formatTime(selectedSolve.totalTimeMs).full}s
-                </div>
-                {selectedSolve.cubeConnected && (
-                  <div className="inline-flex items-center gap-1 mt-1 px-2 py-0.5 rounded text-[10px] font-mono bg-[var(--surface)] text-[var(--green)] border border-[var(--border)]">
-                    <span className="w-1.5 h-1.5 rounded-full bg-[var(--green)]" />
-                    <span>Smart Cube Solve</span>
+                {selectedSolve.dnf ? (
+                  <div>
+                    <div className="font-mono text-3xl font-bold font-tabular text-[var(--red)]">
+                      DNF
+                    </div>
+                    <div className="text-xs font-mono text-[var(--text-muted)] mt-0.5">
+                      ({formatTime(selectedSolve.totalTimeMs).full}s)
+                    </div>
+                  </div>
+                ) : (
+                  <div className="font-mono text-3xl font-bold font-tabular text-[var(--text)]">
+                    {formatTime(selectedSolve.totalTimeMs).full}s
                   </div>
                 )}
+                <div className="flex items-center justify-center gap-1.5 mt-1.5">
+                  {selectedSolve.dnf && (
+                    <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-[var(--red)]/15 text-[var(--red)] border border-[var(--red)]/30">
+                      DNF
+                    </span>
+                  )}
+                  {selectedSolve.cubeConnected && (
+                    <div className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-mono bg-[var(--surface)] text-[var(--green)] border border-[var(--border)]">
+                      <span className="w-1.5 h-1.5 rounded-full bg-[var(--green)]" />
+                      <span>Smart Cube Solve</span>
+                    </div>
+                  )}
+                </div>
               </div>
 
               {/* Phase Splits */}
@@ -138,7 +156,7 @@ export const HistoryView: React.FC = () => {
                   />
                 ) : (
                   <div className="text-xs text-[var(--text-muted)] text-center py-6">
-                    No CFOP phase telemetry recorded for this manual solve.
+                    No CFOP phase telemetry recorded for this solve.
                   </div>
                 )}
               </div>
@@ -203,14 +221,30 @@ export const HistoryView: React.FC = () => {
                       #{solves.length - index}
                     </span>
                     <div>
-                      <div className="font-mono text-base font-medium text-[var(--text)] font-tabular">
-                        {timeObj.seconds}.<span className="text-xs text-[var(--text-muted)]">{timeObj.millis}</span>
-                      </div>
+                      {solve.dnf ? (
+                        <div className="flex items-center gap-2">
+                          <span className="font-mono text-base font-bold text-[var(--red)] font-tabular">
+                            DNF
+                          </span>
+                          <span className="text-xs text-[var(--text-muted)] font-mono">
+                            ({timeObj.seconds}.{timeObj.millis}s)
+                          </span>
+                        </div>
+                      ) : (
+                        <div className="font-mono text-base font-medium text-[var(--text)] font-tabular">
+                          {timeObj.seconds}.<span className="text-xs text-[var(--text-muted)]">{timeObj.millis}</span>
+                        </div>
+                      )}
                       <div className="text-[11px] text-[var(--text-muted)] flex items-center gap-1.5 mt-0.5">
                         <span>{dateStr}</span>
                         {solve.cubeConnected && (
                           <span className="inline-flex items-center px-1.5 py-0.2 rounded text-[9px] bg-[var(--surface-2)] text-[var(--green)] border border-[var(--border)]">
                             Smart Cube
+                          </span>
+                        )}
+                        {solve.dnf && (
+                          <span className="inline-flex items-center px-1.5 py-0.2 rounded text-[9px] bg-[var(--red)]/15 text-[var(--red)] border border-[var(--red)]/30">
+                            DNF
                           </span>
                         )}
                       </div>
@@ -252,8 +286,32 @@ export const HistoryView: React.FC = () => {
               <div className="text-xs text-[var(--text-muted)] uppercase tracking-wider mb-1">
                 Total Time
               </div>
-              <div className="font-mono text-3xl font-semibold font-tabular">
-                {formatTime(selectedSolve.totalTimeMs).full}s
+              {selectedSolve.dnf ? (
+                <div>
+                  <div className="font-mono text-3xl font-bold font-tabular text-[var(--red)]">
+                    DNF
+                  </div>
+                  <div className="text-xs font-mono text-[var(--text-muted)] mt-0.5">
+                    ({formatTime(selectedSolve.totalTimeMs).full}s)
+                  </div>
+                </div>
+              ) : (
+                <div className="font-mono text-3xl font-semibold font-tabular">
+                  {formatTime(selectedSolve.totalTimeMs).full}s
+                </div>
+              )}
+              <div className="flex items-center justify-center gap-1.5 mt-1.5">
+                {selectedSolve.dnf && (
+                  <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-[var(--red)]/15 text-[var(--red)] border border-[var(--red)]/30">
+                    DNF
+                  </span>
+                )}
+                {selectedSolve.cubeConnected && (
+                  <div className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-mono bg-[var(--surface)] text-[var(--green)] border border-[var(--border)]">
+                    <span className="w-1.5 h-1.5 rounded-full bg-[var(--green)]" />
+                    <span>Smart Cube Solve</span>
+                  </div>
+                )}
               </div>
             </div>
 
