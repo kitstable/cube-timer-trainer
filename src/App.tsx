@@ -41,16 +41,16 @@ export function App() {
   }, [currentProfileId, isProfileModalOpen]);
 
   return (
-    <div className="min-h-screen bg-[#0A0A0D] flex items-center justify-center p-0 sm:p-6 font-sans">
-      {/* Mobile-first centered phone frame */}
-      <div className="w-full sm:max-w-[420px] min-h-screen sm:min-h-[760px] sm:max-h-[94vh] bg-[var(--bg)] sm:rounded-[36px] sm:border border-[#2A2C34] px-4 py-5 sm:px-5 sm:py-6 flex flex-col justify-between text-[var(--text)] shadow-2xl overflow-y-auto relative">
+    <div className="min-h-screen bg-[#0A0A0D] flex items-center justify-center p-0 sm:p-4 lg:p-6 font-sans">
+      {/* Mobile-first frame expanding to spacious desktop layout */}
+      <div className="w-full sm:max-w-[440px] lg:max-w-5xl xl:max-w-6xl min-h-screen sm:min-h-[760px] lg:min-h-[720px] sm:max-h-[96vh] lg:max-h-[92vh] bg-[var(--bg)] sm:rounded-[32px] lg:rounded-[36px] sm:border border-[#2A2C34] px-4 py-4 sm:px-5 sm:py-5 lg:px-8 lg:py-6 flex flex-col justify-between text-[var(--text)] shadow-2xl overflow-y-auto relative">
         <Header
           onOpenConnectionModal={() => setIsConnectionModalOpen(true)}
           onOpenProfileModal={() => setIsProfileModalOpen(true)}
           profileName={profileName}
-        />
-
-        <ModeTabs />
+        >
+          <ModeTabs />
+        </Header>
 
         <main className="flex-1 flex flex-col min-h-0">
           {activeMode === 'scramble' && <ScrambleView />}

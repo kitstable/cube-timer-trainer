@@ -7,11 +7,13 @@ import { useAppStore } from '../../store/useAppStore';
 import { useSolverWorker } from '../../hooks/useSolverWorker';
 import { PHASE_DISPLAY_NAMES, ALL_F2L_SLOTS, getMoveDescription } from '../../utils/constants';
 import type { MoveHint, TechniqueTier, NotationMode } from '../../types/cube';
+import { useIsDesktop } from '../../hooks/useMediaQuery';
 
 export const GuidedSolveView: React.FC = () => {
   const { pattern, monotonicPhase, solvedSlots, moveHistory, applyMove, undoLastMove, undoMoves, setScramble: setCubeStoreScramble } = useCubeStore();
   const { currentScramble, setScramble: setAppScramble, setMode, techniqueTier, setTechniqueTier, notationMode, setNotationMode } = useAppStore();
   const { findHint, generateScramble, isReady } = useSolverWorker();
+  const isDesktop = useIsDesktop();
 
   const [currentHint, setCurrentHint] = useState<MoveHint | null>(null);
   const [hintMoveIndex, setHintMoveIndex] = useState<number>(0);
@@ -153,7 +155,6 @@ export const GuidedSolveView: React.FC = () => {
     }
   }, [currentHint, hintMoveIndex, undoMoves, applyMove]);
 
-
   // Auto-advance through the guided walkthrough with a 2-second delay
   useEffect(() => {
     if (!isAutoAdvancing) return;
@@ -196,11 +197,12 @@ export const GuidedSolveView: React.FC = () => {
   // Build the progressive algorithm for the 3D player: scramble moves + all applied moves so far
   const executedHistoryMoves = moveHistory.map((m) => m.move).join(' ');
   const progressiveAlg = executedHistoryMoves.trim();
+  const cubeHeight = isDesktop ? 380 : 215;
 
   return (
-    <div className="flex flex-col flex-1 pb-4">
-      {/* Header Bar */}
-      <div className="flex items-center justify-between mb-2">
+    <div className="flex flex-col lg:grid lg:grid-cols-12 lg:gap-8 flex-1 pb-4">
+      {/* Mobile Header Bar */}
+      <div className="flex lg:hidden items-center justify-between mb-2">
         <div>
           <h1 className="font-heading font-semibold text-xl tracking-tight text-[var(--text)]">
             Guided solve
@@ -220,8 +222,8 @@ export const GuidedSolveView: React.FC = () => {
         </button>
       </div>
 
-      {/* Two Independent Settings Bars (§10) */}
-      <div className="flex flex-col gap-1.5 mb-3">
+      {/* Mobile Settings Bars */}
+      <div className="flex lg:hidden flex-col gap-1.5 mb-3">
         {/* Axis 1: Technique Tier (2-Look | Full PLL | Full CFOP) */}
         <div className="flex items-center gap-1 bg-[var(--surface)] border border-[var(--border)] p-1 rounded-xl">
           <button
@@ -281,223 +283,314 @@ export const GuidedSolveView: React.FC = () => {
         </div>
       </div>
 
+      {/* LEFT COLUMN: Large 3D Visualizer & PhaseRail */}
+      <div className="lg:col-span-5 xl:col-span-5 flex flex-col justify-between mb-3 lg:mb-0 gap-3">
+        <div className="bg-[var(--surface)] border border-[var(--border)] rounded-2xl p-3 flex items-center justify-center min-h-[225px] lg:min-h-[420px] lg:flex-1 relative">
+          {isCalculating ? (
+            <div className="flex flex-col items-center justify-center gap-2 text-sm text-[var(--text-muted)] font-heading">
+              <RefreshCw className="w-5 h-5 animate-spin text-[var(--white)]" />
+              <span>Calculating guidance…</span>
+            </div>
+          ) : (
+            <TwistyPlayerWrapper
+              setupAlg={currentScramble ? `${currentScramble} z2` : 'z2'}
+              alg={progressiveAlg}
+              tempoScale={2.5}
+              height={cubeHeight}
+            />
+          )}
 
-      {/* 3D Cube Card */}
-      <div className="bg-[var(--surface)] border border-[var(--border)] rounded-2xl p-3 mb-3 flex items-center justify-center min-h-[225px] relative">
-        {isCalculating ? (
-          <div className="flex flex-col items-center justify-center gap-2 text-sm text-[var(--text-muted)] font-heading">
-            <RefreshCw className="w-5 h-5 animate-spin text-[var(--white)]" />
-            <span>Calculating guidance…</span>
+          {/* Floating Phase Badge */}
+          <div className="absolute top-3 left-3 px-2.5 py-1 rounded-md bg-[var(--surface-2)]/90 border border-[var(--border)] text-xs font-mono text-[var(--text-muted)] backdrop-blur-xs">
+            {isSolved ? 'Solved' : PHASE_DISPLAY_NAMES[monotonicPhase] || monotonicPhase}
           </div>
-        ) : (
-          <TwistyPlayerWrapper
-            setupAlg={currentScramble ? `${currentScramble} z2` : 'z2'}
-            alg={progressiveAlg}
-            tempoScale={2.5}
-            height={215}
-          />
-        )}
+        </div>
 
-        {/* Floating Phase Badge */}
-        <div className="absolute top-3 left-3 px-2 py-0.5 rounded-md bg-[var(--surface-2)]/90 border border-[var(--border)] text-[11px] font-mono text-[var(--text-muted)] backdrop-blur-xs">
-          {isSolved ? 'Solved' : PHASE_DISPLAY_NAMES[monotonicPhase] || monotonicPhase}
+        {/* Color-to-Structure Phase Rail on Desktop situated below 3D cube */}
+        <div className="hidden lg:block">
+          <PhaseRail
+            currentPhase={monotonicPhase}
+            solvedSlots={solvedSlots}
+          />
         </div>
       </div>
 
-      {/* Next Move Callout Card & Controls (Prominently Visible) */}
-      <div className="bg-[var(--surface)] border border-[var(--border)] rounded-2xl p-3.5 mb-3 relative z-10 shadow-xs">
-        <div className="flex items-center justify-between gap-2 mb-2">
-          <div className="text-[11px] uppercase tracking-wider text-[var(--text-muted)] font-medium">
-            {isSolved
-              ? 'Status'
-              : hasValidMoves
-              ? `Next Move (${hintMoveIndex + 1} of ${currentHint.moves.length}) · ${currentHint.caseName}`
-              : 'Guidance Status'}
+      {/* RIGHT COLUMN: Settings, Next Move, Ribbon & Actions */}
+      <div className="lg:col-span-7 xl:col-span-7 flex flex-col justify-between">
+        {/* Desktop Header */}
+        <div className="hidden lg:flex items-center justify-between mb-3 pb-2 border-b border-[var(--border)]/50">
+          <div>
+            <h1 className="font-heading font-semibold text-2xl tracking-tight text-[var(--text)]">
+              Guided Solve
+            </h1>
+            <div className="text-xs text-[var(--text-muted)] font-medium mt-0.5">
+              {stageSubtitle}
+            </div>
           </div>
 
-          {/* Auto-advance status badge */}
-          {isAutoAdvancing && (
-            <span className="inline-flex items-center gap-1.5 text-[11px] font-mono text-[var(--green)] bg-[var(--green)]/10 border border-[var(--green)]/30 px-2 py-0.5 rounded-full">
-              <span className="w-1.5 h-1.5 rounded-full bg-[var(--green)] animate-ping" />
-              <span>Auto 2s</span>
-            </span>
+          <button
+            onClick={() => fetchHintForCurrentPhase()}
+            disabled={isCalculating}
+            className="flex items-center gap-1.5 text-xs font-heading font-medium text-[var(--text)] bg-[var(--surface-2)] hover:bg-[var(--border)] border border-[var(--border)] rounded-xl px-3 py-2 transition-colors cursor-pointer"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${isCalculating ? 'animate-spin' : ''}`} />
+            <span>Recalculate</span>
+          </button>
+        </div>
+
+        {/* Desktop Settings Bars */}
+        <div className="hidden lg:grid grid-cols-2 gap-2 mb-3">
+          {/* Axis 1: Technique Tier */}
+          <div className="flex items-center gap-1 bg-[var(--surface)] border border-[var(--border)] p-1 rounded-xl">
+            <button
+              onClick={() => handleTierChange('2look')}
+              className={`flex-1 py-1.5 px-2 rounded-lg text-xs font-heading font-medium transition-all cursor-pointer text-center ${
+                techniqueTier === '2look'
+                  ? 'bg-[var(--white)] text-[var(--bg)] font-semibold shadow-xs'
+                  : 'text-[var(--text-muted)] hover:text-[var(--text)]'
+              }`}
+            >
+              2-Look
+            </button>
+            <button
+              onClick={() => handleTierChange('fullPLL')}
+              className={`flex-1 py-1.5 px-2 rounded-lg text-xs font-heading font-medium transition-all cursor-pointer text-center ${
+                techniqueTier === 'fullPLL'
+                  ? 'bg-[var(--white)] text-[var(--bg)] font-semibold shadow-xs'
+                  : 'text-[var(--text-muted)] hover:text-[var(--text)]'
+              }`}
+            >
+              Full PLL
+            </button>
+            <button
+              onClick={() => handleTierChange('fullCFOP')}
+              className={`flex-1 py-1.5 px-2 rounded-lg text-xs font-heading font-medium transition-all cursor-pointer text-center ${
+                techniqueTier === 'fullCFOP'
+                  ? 'bg-[var(--white)] text-[var(--bg)] font-semibold shadow-xs'
+                  : 'text-[var(--text-muted)] hover:text-[var(--text)]'
+              }`}
+            >
+              Full CFOP
+            </button>
+          </div>
+
+          {/* Axis 2: Notation Mode */}
+          <div className="flex items-center gap-1 bg-[var(--surface)] border border-[var(--border)] p-1 rounded-xl">
+            <button
+              onClick={() => handleNotationChange('simplified')}
+              className={`flex-1 py-1.5 px-2 rounded-lg text-xs font-heading font-medium transition-all cursor-pointer text-center ${
+                notationMode === 'simplified'
+                  ? 'bg-[var(--white)] text-[var(--bg)] font-semibold shadow-xs'
+                  : 'text-[var(--text-muted)] hover:text-[var(--text)]'
+              }`}
+            >
+              Simplified Moves
+            </button>
+            <button
+              onClick={() => handleNotationChange('standard')}
+              className={`flex-1 py-1.5 px-2 rounded-lg text-xs font-heading font-medium transition-all cursor-pointer text-center ${
+                notationMode === 'standard'
+                  ? 'bg-[var(--white)] text-[var(--bg)] font-semibold shadow-xs'
+                  : 'text-[var(--text-muted)] hover:text-[var(--text)]'
+              }`}
+            >
+              Standard Notation
+            </button>
+          </div>
+        </div>
+
+        {/* Next Move Callout Card & Controls */}
+        <div className="bg-[var(--surface)] border border-[var(--border)] rounded-2xl p-3.5 lg:p-4 mb-3 relative z-10 shadow-xs">
+          <div className="flex items-center justify-between gap-2 mb-2">
+            <div className="text-[11px] uppercase tracking-wider text-[var(--text-muted)] font-medium">
+              {isSolved
+                ? 'Status'
+                : hasValidMoves
+                ? `Next Move (${hintMoveIndex + 1} of ${currentHint.moves.length}) · ${currentHint.caseName}`
+                : 'Guidance Status'}
+            </div>
+
+            {/* Auto-advance status badge */}
+            {isAutoAdvancing && (
+              <span className="inline-flex items-center gap-1.5 text-[11px] font-mono text-[var(--green)] bg-[var(--green)]/10 border border-[var(--green)]/30 px-2 py-0.5 rounded-full">
+                <span className="w-1.5 h-1.5 rounded-full bg-[var(--green)] animate-ping" />
+                <span>Auto 2s</span>
+              </span>
+            )}
+          </div>
+
+          {isSolved ? (
+            <div className="flex items-center gap-2.5 text-[var(--green)] py-1">
+              <CheckCircle2 className="w-6 h-6 shrink-0" />
+              <div>
+                <div className="font-heading font-semibold text-sm">Cube is Solved!</div>
+                <div className="text-xs text-[var(--text-muted)]">All CFOP stages successfully completed</div>
+              </div>
+            </div>
+          ) : hasValidMoves && currentExpectedMove ? (
+            <div className="flex items-center gap-3">
+              <div className="font-mono text-2xl lg:text-3xl font-bold text-[var(--white)] bg-[var(--surface-2)] border border-[var(--border)] px-3 py-1.5 rounded-xl shadow-xs shrink-0 min-w-[58px] text-center">
+                {currentExpectedMove}
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="text-xs lg:text-sm font-semibold text-[var(--text)] truncate">
+                  {getMoveDescription(currentExpectedMove)}
+                </div>
+                <div className="text-[11px] text-[var(--text-muted)] mt-0.5">
+                  Execute on physical cube, or tap Next move below
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="py-2 text-center text-xs text-[var(--text-muted)]">
+              {isCalculating ? 'Computing optimal move sequence…' : 'Phase complete · Ready for next step'}
+            </div>
+          )}
+
+          {/* Stepping & Auto-Play Toolbar */}
+          {!isSolved && hasValidMoves && (
+            <div className="flex items-center justify-between gap-2 mt-3 pt-3 border-t border-[var(--border)]/60">
+              <button
+                onClick={() => setIsAutoAdvancing((prev) => !prev)}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-heading font-medium transition-all cursor-pointer ${
+                  isAutoAdvancing
+                    ? 'bg-[var(--green)] text-black font-semibold shadow-xs'
+                    : 'bg-[var(--surface-2)] text-[var(--text)] hover:bg-[var(--border)]'
+                }`}
+                title={isAutoAdvancing ? 'Pause auto-walkthrough' : 'Auto-play walkthrough with 2s delay per move'}
+              >
+                {isAutoAdvancing ? (
+                  <>
+                    <Pause className="w-3.5 h-3.5 fill-current" />
+                    <span>Pause (2s)</span>
+                  </>
+                ) : (
+                  <>
+                    <Play className="w-3.5 h-3.5 fill-current" />
+                    <span>Auto (2s)</span>
+                  </>
+                )}
+              </button>
+
+              <div className="flex items-center gap-1.5 ml-auto">
+                <button
+                  onClick={handleStepBackMove}
+                  disabled={hintMoveIndex === 0}
+                  title="Previous move in hint"
+                  className="p-2 rounded-xl bg-[var(--surface-2)] text-[var(--text)] hover:bg-[var(--border)] disabled:opacity-30 disabled:cursor-not-allowed transition-colors cursor-pointer"
+                >
+                  <ChevronLeft className="w-4 h-4" />
+                </button>
+
+                <button
+                  onClick={() => {
+                    setIsAutoAdvancing(false);
+                    handleExecuteNextMove();
+                  }}
+                  disabled={hintMoveIndex >= currentHint.moves.length}
+                  title="Advance move"
+                  className="flex items-center gap-1 px-3 py-2 rounded-xl bg-[var(--white)] text-[var(--bg)] font-heading font-semibold text-xs hover:opacity-90 disabled:opacity-30 disabled:cursor-not-allowed transition-all cursor-pointer shadow-xs"
+                >
+                  <span>Step</span>
+                  <ChevronRight className="w-3.5 h-3.5" />
+                </button>
+
+                <button
+                  onClick={handleResetHintProgress}
+                  disabled={hintMoveIndex === 0}
+                  title="Reset current hint progress"
+                  className="p-2 rounded-xl bg-[var(--surface-2)] text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--border)] disabled:opacity-30 disabled:cursor-not-allowed transition-colors cursor-pointer"
+                >
+                  <RotateCcw className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
           )}
         </div>
 
-        {isSolved ? (
-          <div className="flex items-center gap-2.5 text-[var(--green)] py-1">
-            <CheckCircle2 className="w-6 h-6 shrink-0" />
-            <div>
-              <div className="font-heading font-semibold text-sm">Cube is Solved!</div>
-              <div className="text-xs text-[var(--text-muted)]">All CFOP stages successfully completed</div>
-            </div>
-          </div>
-        ) : hasValidMoves && currentExpectedMove ? (
-          <div className="flex items-center gap-3">
-            <div className="font-mono text-2xl font-bold text-[var(--white)] bg-[var(--surface-2)] border border-[var(--border)] px-3 py-1 rounded-xl shadow-xs shrink-0 min-w-[54px] text-center">
-              {currentExpectedMove}
-            </div>
-            <div className="min-w-0 flex-1">
-              <div className="text-xs font-semibold text-[var(--text)] truncate">
-                {getMoveDescription(currentExpectedMove)}
+        {/* Hint Move Ribbon */}
+        <div className="mb-3">
+          {currentHint && currentHint.moves.length > 0 ? (
+            <div className="bg-[var(--surface)] border border-[var(--border)] rounded-2xl p-3.5 lg:p-4">
+              <div className="text-[11px] uppercase tracking-wider text-[var(--text-muted)] font-medium mb-2 text-center">
+                {currentHint.caseName ? `${currentHint.caseName} Algorithm` : 'Algorithm Sequence'}
               </div>
-              <div className="text-[11px] text-[var(--text-muted)] mt-0.5">
-                Execute on physical cube, or tap Next move below
-              </div>
-            </div>
-          </div>
-        ) : (
-          <div className="py-2 text-center text-xs text-[var(--text-muted)]">
-            {isCalculating ? 'Computing optimal move sequence…' : 'Phase complete · Ready for next step'}
-          </div>
-        )}
+              <div className="font-mono text-sm font-medium leading-relaxed tracking-wide flex flex-wrap gap-1.5 justify-center py-1">
+                {currentHint.moves.map((m, idx) => {
+                  const isDone = idx < hintMoveIndex;
+                  const isCurrent = idx === hintMoveIndex;
 
-        {/* Stepping & Auto-Play Toolbar */}
-        {!isSolved && hasValidMoves && (
-          <div className="flex items-center justify-between gap-2 mt-3 pt-3 border-t border-[var(--border)]/60">
+                  return (
+                    <button
+                      key={idx}
+                      onClick={() => handleJumpToHintIndex(idx)}
+                      className={`px-2 py-1 rounded-md text-xs font-mono transition-all cursor-pointer ${
+                        isDone
+                          ? 'text-[var(--text-muted)] opacity-40 line-through bg-transparent'
+                          : isCurrent
+                          ? 'bg-[var(--white)] text-[var(--bg)] font-bold shadow-xs scale-105 ring-2 ring-[var(--white)]/30'
+                          : 'text-[var(--text)] bg-[var(--surface-2)] hover:bg-[var(--border)]'
+                      }`}
+                    >
+                      {m}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          ) : (
+            <div className="text-center my-2 py-2">
+              <div className="text-xs uppercase tracking-wider text-[var(--text-muted)] font-medium mb-1">
+                Phase status
+              </div>
+              <div className="font-mono text-xl text-[var(--green)]">
+                {isSolved ? 'Cube is Solved!' : 'Ready for next phase'}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Mobile Color-to-Structure Phase Rail */}
+        <div className="block lg:hidden mb-3">
+          <PhaseRail
+            currentPhase={monotonicPhase}
+            solvedSlots={solvedSlots}
+          />
+        </div>
+
+        {/* Bottom Action CTAs */}
+        <div className="mt-auto flex flex-col sm:flex-row gap-2 pt-2">
+          {isSolved ? (
             <button
-              onClick={() => setIsAutoAdvancing((prev) => !prev)}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-heading font-medium transition-all cursor-pointer ${
-                isAutoAdvancing
-                  ? 'bg-[var(--green)] text-black font-semibold shadow-xs'
-                  : 'bg-[var(--surface-2)] text-[var(--text)] hover:bg-[var(--border)]'
-              }`}
-              title={isAutoAdvancing ? 'Pause auto-walkthrough' : 'Auto-play walkthrough with 2s delay per move'}
+              onClick={() => setMode('scramble')}
+              className="flex-1 py-3.5 rounded-xl font-heading font-semibold text-[15px] bg-[var(--white)] text-[var(--bg)] hover:opacity-90 active:scale-[0.99] transition-all flex items-center justify-center gap-2 cursor-pointer shadow-sm"
             >
-              {isAutoAdvancing ? (
-                <>
-                  <Pause className="w-3.5 h-3.5 fill-current" />
-                  <span>Pause (2s)</span>
-                </>
-              ) : (
-                <>
-                  <Play className="w-3.5 h-3.5 fill-current" />
-                  <span>Auto (2s)</span>
-                </>
-              )}
+              <RefreshCw className="w-4 h-4" />
+              <span>Start New Scramble</span>
             </button>
+          ) : (
+            <button
+              onClick={() => {
+                setIsAutoAdvancing(false);
+                handleExecuteNextMove();
+              }}
+              disabled={!hasValidMoves || hintMoveIndex >= currentHint.moves.length || isCalculating}
+              className="flex-1 py-3.5 rounded-xl font-heading font-semibold text-[15px] bg-[var(--white)] text-[var(--bg)] hover:opacity-90 active:scale-[0.99] transition-all flex items-center justify-center gap-2 cursor-pointer shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <ArrowRight className="w-4 h-4" />
+              <span>Next move ({currentExpectedMove || '—'})</span>
+            </button>
+          )}
 
-            <div className="flex items-center gap-1.5 ml-auto">
-              <button
-                onClick={handleStepBackMove}
-                disabled={hintMoveIndex === 0}
-                title="Previous move in hint"
-                className="p-2 rounded-xl bg-[var(--surface-2)] text-[var(--text)] hover:bg-[var(--border)] disabled:opacity-30 disabled:cursor-not-allowed transition-colors cursor-pointer"
-              >
-                <ChevronLeft className="w-4 h-4" />
-              </button>
-
-              <button
-                onClick={() => {
-                  setIsAutoAdvancing(false);
-                  handleExecuteNextMove();
-                }}
-                disabled={hintMoveIndex >= currentHint.moves.length}
-                title="Advance move"
-                className="flex items-center gap-1 px-3 py-2 rounded-xl bg-[var(--white)] text-[var(--bg)] font-heading font-semibold text-xs hover:opacity-90 disabled:opacity-30 disabled:cursor-not-allowed transition-all cursor-pointer shadow-xs"
-              >
-                <span>Step</span>
-                <ChevronRight className="w-3.5 h-3.5" />
-              </button>
-
-              <button
-                onClick={handleResetHintProgress}
-                disabled={hintMoveIndex === 0}
-                title="Reset current hint progress"
-                className="p-2 rounded-xl bg-[var(--surface-2)] text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--border)] disabled:opacity-30 disabled:cursor-not-allowed transition-colors cursor-pointer"
-              >
-                <RotateCcw className="w-4 h-4" />
-              </button>
-            </div>
-          </div>
-        )}
-      </div>
-
-      {/* Hint Move Ribbon (Interactive move chips) */}
-      <div className="mb-3">
-        {currentHint && currentHint.moves.length > 0 ? (
-          <div className="bg-[var(--surface)] border border-[var(--border)] rounded-2xl p-3">
-            <div className="text-[11px] uppercase tracking-wider text-[var(--text-muted)] font-medium mb-2 text-center">
-              {currentHint.caseName ? `${currentHint.caseName} Algorithm` : 'Algorithm Sequence'}
-            </div>
-            <div className="font-mono text-sm font-medium leading-relaxed tracking-wide flex flex-wrap gap-1.5 justify-center py-1">
-              {currentHint.moves.map((m, idx) => {
-                const isDone = idx < hintMoveIndex;
-                const isCurrent = idx === hintMoveIndex;
-
-                return (
-                  <button
-                    key={idx}
-                    onClick={() => handleJumpToHintIndex(idx)}
-                    className={`px-2 py-1 rounded-md text-xs font-mono transition-all cursor-pointer ${
-                      isDone
-                        ? 'text-[var(--text-muted)] opacity-40 line-through bg-transparent'
-                        : isCurrent
-                        ? 'bg-[var(--white)] text-[var(--bg)] font-bold shadow-xs scale-105 ring-2 ring-[var(--white)]/30'
-                        : 'text-[var(--text)] bg-[var(--surface-2)] hover:bg-[var(--border)]'
-                    }`}
-                  >
-                    {m}
-                  </button>
-                );
-              })}
-            </div>
-
-          </div>
-        ) : (
-          <div className="text-center my-2 py-2">
-            <div className="text-xs uppercase tracking-wider text-[var(--text-muted)] font-medium mb-1">
-              Phase status
-            </div>
-            <div className="font-mono text-xl text-[var(--green)]">
-              {isSolved ? 'Cube is Solved!' : 'Ready for next phase'}
-            </div>
-          </div>
-        )}
-      </div>
-
-      {/* Color-to-Structure Phase Rail */}
-      <div className="mb-3">
-        <PhaseRail
-          currentPhase={monotonicPhase}
-          solvedSlots={solvedSlots}
-        />
-      </div>
-
-      {/* Bottom Action CTAs */}
-      <div className="mt-auto flex flex-col gap-2 pt-2">
-        {isSolved ? (
           <button
-            onClick={() => setMode('scramble')}
-            className="w-full py-4 rounded-xl font-heading font-semibold text-[15px] bg-[var(--white)] text-[var(--bg)] hover:opacity-90 active:scale-[0.99] transition-all flex items-center justify-center gap-2 cursor-pointer shadow-sm"
+            onClick={() => fetchHintForCurrentPhase()}
+            disabled={isCalculating}
+            className="flex-1 py-3 rounded-xl font-heading font-medium text-[13px] bg-transparent border border-[var(--border)] text-[var(--text)] hover:bg-[var(--surface)] active:scale-[0.99] transition-all flex items-center justify-center gap-2 cursor-pointer"
           >
-            <RefreshCw className="w-4 h-4" />
-            <span>Start New Scramble</span>
+            <RotateCw className="w-3.5 h-3.5" />
+            <span>Resync / Recalculate</span>
           </button>
-        ) : (
-          <button
-            onClick={() => {
-              setIsAutoAdvancing(false);
-              handleExecuteNextMove();
-            }}
-            disabled={!hasValidMoves || hintMoveIndex >= currentHint.moves.length || isCalculating}
-            className="w-full py-4 rounded-xl font-heading font-semibold text-[15px] bg-[var(--white)] text-[var(--bg)] hover:opacity-90 active:scale-[0.99] transition-all flex items-center justify-center gap-2 cursor-pointer shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            <ArrowRight className="w-4 h-4" />
-            <span>Next move ({currentExpectedMove || '—'})</span>
-          </button>
-        )}
-
-        <button
-          onClick={() => fetchHintForCurrentPhase()}
-          disabled={isCalculating}
-          className="w-full py-3 rounded-xl font-heading font-medium text-[13px] bg-transparent border border-[var(--border)] text-[var(--text)] hover:bg-[var(--surface)] active:scale-[0.99] transition-all flex items-center justify-center gap-2 cursor-pointer"
-        >
-          <RotateCw className="w-3.5 h-3.5" />
-          <span>Resync / Recalculate</span>
-        </button>
-
-
+        </div>
       </div>
     </div>
   );
