@@ -42,5 +42,14 @@ export interface Solve {
   /** Overall turns per second over the whole solve (smart-cube solves only). */
   overallTps?: number;
   dnf?: boolean;
+  plusTwo?: boolean;
   createdAt: number;
 }
+
+/**
+ * Calculates the effective solve time in milliseconds taking +2 penalty into account.
+ */
+export function getEffectiveTimeMs(solve: { totalTimeMs: number; plusTwo?: boolean }): number {
+  return solve.totalTimeMs + (solve.plusTwo ? 2000 : 0);
+}
+

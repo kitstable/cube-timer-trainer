@@ -11,6 +11,7 @@ export const COLORS = {
   white: '#F3F1EA',
   yellow: '#FFD500',
   gold: '#E8A200',
+  purple: '#A855F7',
   red: '#C8102E',
   orange: '#FF6D1F',
   blue: '#0057B8',
@@ -26,10 +27,11 @@ export const PHASE_COLORS: Record<string, string> = {
   'f2l-3': COLORS.blue,
   'f2l-4': COLORS.orange,
   oll: COLORS.yellow,
-  pll: COLORS.gold,
-  auf: COLORS.gold,
+  pll: COLORS.purple,
+  auf: COLORS.purple,
   solved: COLORS.green,
 };
+
 
 export const PHASE_DISPLAY_NAMES: Record<CFOPPhase, string> = {
   inspection: 'Inspection',

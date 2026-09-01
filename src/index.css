@@ -11,6 +11,7 @@
   --color-cube-white: #F3F1EA;
   --color-cube-yellow: #FFD500;
   --color-cube-gold: #E8A200;
+  --color-cube-purple: #A855F7;
   --color-cube-red: #C8102E;
   --color-cube-orange: #FF6D1F;
   --color-cube-blue: #0057B8;
@@ -32,11 +33,13 @@
   --white: #F3F1EA;
   --yellow: #FFD500;
   --gold: #E8A200;
+  --purple: #A855F7;
   --red: #C8102E;
   --orange: #FF6D1F;
   --blue: #0057B8;
   --green: #009A44;
 }
+
 
 * {
   box-sizing: border-box;

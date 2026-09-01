@@ -1,7 +1,8 @@
 import React, { useEffect, useState, useMemo } from 'react';
-import { Play, Square, RotateCcw } from 'lucide-react';
+import { Play, Square, RotateCcw, Trash2, Trophy } from 'lucide-react';
 import { TwistyPlayerWrapper } from '../TwistyPlayerWrapper';
 import { StopSolveModal } from '../StopSolveModal';
+import { MicroSolveModal } from '../MicroSolveModal';
 import { useTimer } from '../../hooks/useTimer';
 import { useSolverWorker } from '../../hooks/useSolverWorker';
 import { useCubeStore } from '../../store/useCubeStore';
@@ -11,6 +12,7 @@ import { PhaseBreakdown } from '../ui/PhaseBreakdown';
 import { LivePhaseSplits } from '../ui/LivePhaseSplits';
 import { PHASE_DISPLAY_NAMES } from '../../utils/constants';
 import { getSolvesByProfile, calculateSessionStats, type SessionStats } from '../../db/repository';
+import { getEffectiveTimeMs } from '../../types/db';
 import { useIsDesktop } from '../../hooks/useMediaQuery';
 
 export const TimedSolveView: React.FC = () => {
@@ -19,12 +21,18 @@ export const TimedSolveView: React.FC = () => {
     elapsedMs,
     inspectionRemainingMs,
     lastCompletedSolve,
+    pendingMicroSolve,
     startInspection,
     startSolve,
     pauseTimer,
     resumeTimer,
     saveDnfSolve,
     discardSolve,
+    confirmSaveMicroSolve,
+    discardMicroSolve,
+    togglePlusTwo,
+    toggleDnf,
+    deleteLastSolve,
     resetTimer,
     handleHoldStart,
     handleHoldRelease,
@@ -71,7 +79,7 @@ export const TimedSolveView: React.FC = () => {
   // Spacebar hotkey handler
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (timerState === 'paused') return;
+      if (timerState === 'paused' || timerState === 'micro-solve') return;
       if (e.code === 'Space' && !e.repeat) {
         e.preventDefault();
         handleHoldStart();
@@ -79,7 +87,7 @@ export const TimedSolveView: React.FC = () => {
     };
 
     const handleKeyUp = (e: KeyboardEvent) => {
-      if (timerState === 'paused') return;
+      if (timerState === 'paused' || timerState === 'micro-solve') return;
       if (e.code === 'Space') {
         e.preventDefault();
         handleHoldRelease();
@@ -94,8 +102,18 @@ export const TimedSolveView: React.FC = () => {
     };
   }, [handleHoldStart, handleHoldRelease, timerState]);
 
-  const formattedSolveTime = formatTime(elapsedMs);
+  const effectiveMs = lastCompletedSolve
+    ? getEffectiveTimeMs(lastCompletedSolve)
+    : elapsedMs;
+  const formattedSolveTime = formatTime(effectiveMs);
   const formattedInspection = (inspectionRemainingMs / 1000).toFixed(1);
+
+  // Check if lastCompletedSolve is the session best (PB)
+  const isPbSolve = Boolean(
+    lastCompletedSolve &&
+    !lastCompletedSolve.dnf &&
+    stats?.bestSolveId === lastCompletedSolve.id
+  );
 
   // "Next Scramble": generate a fresh WCA scramble, seed both stores, then jump to the
   // Scramble tab. Without regenerating here, ScrambleView mounts still holding the just-
@@ -136,13 +154,16 @@ export const TimedSolveView: React.FC = () => {
   } else if (timerState === 'paused') {
     phaseStatusLabel = 'Solve paused';
     timerTextColor = 'text-[var(--orange)]';
+  } else if (timerState === 'micro-solve') {
+    phaseStatusLabel = 'Micro-solve detected';
+    timerTextColor = 'text-[var(--orange)]';
   } else if (timerState === 'completed') {
     if (lastCompletedSolve?.dnf) {
       phaseStatusLabel = 'Solve DNF';
       timerTextColor = 'text-[var(--red)]';
     } else {
-      phaseStatusLabel = 'Solve completed';
-      timerTextColor = 'text-[var(--green)]';
+      phaseStatusLabel = isPbSolve ? 'New Session Best!' : 'Solve completed';
+      timerTextColor = isPbSolve ? 'text-[var(--purple)]' : 'text-[var(--green)]';
     }
   }
 
@@ -150,22 +171,22 @@ export const TimedSolveView: React.FC = () => {
     <div
       className="flex flex-col lg:grid lg:grid-cols-12 lg:gap-8 flex-1 pb-4 select-none"
       onMouseDown={(e) => {
-        if (timerState === 'paused') return;
+        if (timerState === 'paused' || timerState === 'micro-solve') return;
         if ((e.target as HTMLElement).closest('button, a, input, [role="button"], [role="dialog"]')) return;
         handleHoldStart();
       }}
       onMouseUp={(e) => {
-        if (timerState === 'paused') return;
+        if (timerState === 'paused' || timerState === 'micro-solve') return;
         if ((e.target as HTMLElement).closest('button, a, input, [role="button"], [role="dialog"]')) return;
         handleHoldRelease();
       }}
       onTouchStart={(e) => {
-        if (timerState === 'paused') return;
+        if (timerState === 'paused' || timerState === 'micro-solve') return;
         if ((e.target as HTMLElement).closest('button, a, input, [role="button"], [role="dialog"]')) return;
         handleHoldStart();
       }}
       onTouchEnd={(e) => {
-        if (timerState === 'paused') return;
+        if (timerState === 'paused' || timerState === 'micro-solve') return;
         if ((e.target as HTMLElement).closest('button, a, input, [role="button"], [role="dialog"]')) return;
         handleHoldRelease();
       }}
@@ -216,8 +237,9 @@ export const TimedSolveView: React.FC = () => {
             </div>
             <div>
               <div className="text-[10px] uppercase tracking-wider text-[var(--text-muted)] font-medium mb-0.5">Best</div>
-              <div className="font-mono text-sm font-semibold text-[var(--green)] font-tabular">
-                {stats.best ? `${(stats.best / 1000).toFixed(2)}s` : '—'}
+              <div className="font-mono text-sm font-semibold text-[var(--purple)] font-tabular flex items-center justify-center gap-1">
+                <Trophy className="w-3.5 h-3.5 text-[var(--purple)] shrink-0" />
+                <span>{stats.best ? `${(stats.best / 1000).toFixed(2)}s` : '—'}</span>
               </div>
             </div>
             <div>
@@ -247,18 +269,29 @@ export const TimedSolveView: React.FC = () => {
         </div>
 
         {/* Main Timer Display */}
-        <div className="text-center py-6 my-auto bg-[var(--surface)]/50 border border-[var(--border)]/60 rounded-2xl mb-3">
+        <div className="text-center py-6 my-auto bg-[var(--surface)]/50 border border-[var(--border)]/60 rounded-2xl mb-3 relative overflow-hidden">
+          {/* PB Celebration Badge */}
+          {timerState === 'completed' && isPbSolve && (
+            <div className="inline-flex items-center gap-1.5 px-3 py-1 mb-2 rounded-full bg-[var(--purple)]/15 border border-[var(--purple)]/40 text-[var(--purple)] text-xs font-heading font-semibold shadow-xs">
+              <Trophy className="w-3.5 h-3.5 fill-[var(--purple)] text-[var(--purple)]" />
+              <span>Personal Best!</span>
+            </div>
+          )}
+
           <div
             className={`font-mono text-xs tracking-wider uppercase mb-2 font-medium transition-colors ${
               timerState === 'running'
                 ? 'text-[var(--green)]'
-                : timerState === 'inspection' || timerState === 'paused'
+                : timerState === 'inspection' || timerState === 'paused' || timerState === 'micro-solve'
                 ? 'text-[var(--orange)]'
+                : isPbSolve
+                ? 'text-[var(--purple)]'
                 : 'text-[var(--text-muted)]'
             }`}
           >
             {phaseStatusLabel}
           </div>
+
 
           <div className={`font-mono text-5xl lg:text-7xl font-medium tracking-tight font-tabular transition-colors ${timerTextColor}`}>
             {timerState === 'inspection' ? (
@@ -267,16 +300,21 @@ export const TimedSolveView: React.FC = () => {
               <div className="flex flex-col items-center">
                 <span className="text-[var(--red)] font-bold text-5xl lg:text-7xl">DNF</span>
                 <span className="text-sm lg:text-base text-[var(--text-muted)] font-mono mt-1 font-tabular">
-                  ({formattedSolveTime.seconds}.{formattedSolveTime.millis}s)
+                  ({formatTime(lastCompletedSolve.totalTimeMs).full}s)
                 </span>
               </div>
             ) : (
-              <>
-                {formattedSolveTime.seconds}.
+              <div className="inline-flex items-baseline">
+                <span>{formattedSolveTime.seconds}.</span>
                 <span className="text-2xl lg:text-4xl text-[var(--text-muted)]">
                   {formattedSolveTime.millis}
                 </span>
-              </>
+                {lastCompletedSolve?.plusTwo && (
+                  <span className="text-sm lg:text-lg font-mono text-[var(--orange)] ml-1.5">
+                    +2
+                  </span>
+                )}
+              </div>
             )}
           </div>
 
@@ -293,7 +331,7 @@ export const TimedSolveView: React.FC = () => {
             <div className="px-2 py-1">
               <PhaseBreakdown
                 phases={lastCompletedSolve.phases}
-                totalTimeMs={lastCompletedSolve.totalTimeMs}
+                totalTimeMs={getEffectiveTimeMs(lastCompletedSolve)}
                 totalMoves={lastCompletedSolve.cubeConnected ? lastCompletedSolve.totalMoves : undefined}
                 overallTps={lastCompletedSolve.cubeConnected ? lastCompletedSolve.overallTps : undefined}
               />
@@ -314,7 +352,7 @@ export const TimedSolveView: React.FC = () => {
           )}
         </div>
 
-        {/* Bottom CTA Button */}
+        {/* Bottom CTA & Post-Solve Action Bar */}
         <div className="mt-auto pt-2">
           {timerState === 'running' || timerState === 'paused' ? (
             <button
@@ -331,20 +369,68 @@ export const TimedSolveView: React.FC = () => {
               <Square className="w-4 h-4 fill-current" />
               <span>Stop</span>
             </button>
-          ) : timerState === 'completed' ? (
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                if (!isPreparingScramble) handleCompletedCta();
-              }}
-              onMouseDown={(e) => e.stopPropagation()}
-              onTouchStart={(e) => e.stopPropagation()}
-              disabled={isPreparingScramble}
-              className="w-full py-3.5 rounded-xl font-heading font-semibold text-[15px] bg-[var(--white)] text-[var(--bg)] hover:opacity-90 active:scale-[0.99] transition-all flex items-center justify-center gap-2 cursor-pointer shadow-sm disabled:opacity-60"
-            >
-              <RotateCcw className={`w-4 h-4 ${isPreparingScramble ? 'animate-spin' : ''}`} />
-              <span>{isPreparingScramble ? 'Generating…' : 'Next Scramble'}</span>
-            </button>
+          ) : timerState === 'completed' && lastCompletedSolve ? (
+            <div className="space-y-2">
+              {/* Quick Action Bar: +2, DNF, Delete */}
+              <div className="grid grid-cols-3 gap-2">
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    togglePlusTwo();
+                  }}
+                  className={`py-2 rounded-xl text-xs font-mono font-semibold border transition-all cursor-pointer flex items-center justify-center gap-1 ${
+                    lastCompletedSolve.plusTwo
+                      ? 'bg-[var(--orange)] text-white border-[var(--orange)]'
+                      : 'bg-[var(--surface-2)] text-[var(--text-muted)] hover:text-[var(--text)] border-[var(--border)]'
+                  }`}
+                >
+                  <span>+2</span>
+                </button>
+
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    toggleDnf();
+                  }}
+                  className={`py-2 rounded-xl text-xs font-mono font-semibold border transition-all cursor-pointer flex items-center justify-center gap-1 ${
+                    lastCompletedSolve.dnf
+                      ? 'bg-[var(--red)] text-white border-[var(--red)]'
+                      : 'bg-[var(--surface-2)] text-[var(--text-muted)] hover:text-[var(--text)] border-[var(--border)]'
+                  }`}
+                >
+                  <span>DNF</span>
+                </button>
+
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (confirm('Discard/delete this solve?')) {
+                      deleteLastSolve();
+                    }
+                  }}
+                  title="Discard solve"
+                  className="py-2 rounded-xl text-xs font-medium bg-[var(--surface-2)] hover:bg-[var(--red)]/15 text-[var(--text-muted)] hover:text-[var(--red)] border border-[var(--border)] transition-all cursor-pointer flex items-center justify-center gap-1.5"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  <span>Delete</span>
+                </button>
+              </div>
+
+              {/* Next Scramble Button */}
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (!isPreparingScramble) handleCompletedCta();
+                }}
+                onMouseDown={(e) => e.stopPropagation()}
+                onTouchStart={(e) => e.stopPropagation()}
+                disabled={isPreparingScramble}
+                className="w-full py-3.5 rounded-xl font-heading font-semibold text-[15px] bg-[var(--white)] text-[var(--bg)] hover:opacity-90 active:scale-[0.99] transition-all flex items-center justify-center gap-2 cursor-pointer shadow-sm disabled:opacity-60"
+              >
+                <RotateCcw className={`w-4 h-4 ${isPreparingScramble ? 'animate-spin' : ''}`} />
+                <span>{isPreparingScramble ? 'Generating…' : 'Next Scramble'}</span>
+              </button>
+            </div>
           ) : (
             <button
               onClick={(e) => {
@@ -370,6 +456,16 @@ export const TimedSolveView: React.FC = () => {
         onDiscard={discardSolve}
         onCancel={resumeTimer}
       />
+
+      {/* Micro-Solve Confirmation Modal */}
+      <MicroSolveModal
+        isOpen={timerState === 'micro-solve'}
+        moveCount={pendingMicroSolve?.moveCount ?? 0}
+        timeMs={pendingMicroSolve?.timeMs ?? 0}
+        onSave={confirmSaveMicroSolve}
+        onDiscard={discardMicroSolve}
+      />
     </div>
   );
 };
+

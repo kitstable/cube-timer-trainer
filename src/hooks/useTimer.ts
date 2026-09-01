@@ -3,20 +3,28 @@ import { Alg } from 'cubing/alg';
 import confetti from 'canvas-confetti';
 import { useCubeStore } from '../store/useCubeStore';
 import { useAppStore } from '../store/useAppStore';
-import { saveSolve } from '../db/repository';
+import { saveSolve, updateSolve, deleteSolve } from '../db/repository';
 import { calculateSolveTelemetry } from '../utils/telemetryCalculator';
 import { getDefaultPattern } from '../utils/kpuzzleHelper';
 import { readActiveSmartCubePattern } from './useSmartCube';
 import type { Solve } from '../types/db';
 import type { CFOPPhase } from '../types/cube';
 
-export type TimerState = 'idle' | 'holding' | 'ready' | 'inspection' | 'running' | 'paused' | 'completed';
+export type TimerState = 'idle' | 'holding' | 'ready' | 'inspection' | 'running' | 'paused' | 'micro-solve' | 'completed';
+
+export interface PendingMicroSolve {
+  moves: any[];
+  finalSolveTimeMs: number;
+  inspectionDuration: number;
+  isCubeConnected: boolean;
+}
 
 export function useTimer() {
   const [timerState, setTimerState] = useState<TimerState>('idle');
   const [elapsedMs, setElapsedMs] = useState(0);
   const [inspectionRemainingMs, setInspectionRemainingMs] = useState(15000);
   const [lastCompletedSolve, setLastCompletedSolve] = useState<Solve | null>(null);
+  const [pendingMicroSolve, setPendingMicroSolve] = useState<{ moveCount: number; timeMs: number } | null>(null);
 
   const {
     phaseStatus,
@@ -37,6 +45,7 @@ export function useTimer() {
   const animFrameRef = useRef<number | null>(null);
   const holdTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const lastProcessedMoveTsRef = useRef<number>(0);
+  const pendingSolveDataRef = useRef<PendingMicroSolve | null>(null);
 
   const phaseTimingsRef = useRef<{ phase: CFOPPhase; start: number; end: number }[]>([]);
   const currentPhaseRef = useRef<CFOPPhase>('cross');
@@ -44,10 +53,9 @@ export function useTimer() {
   const startInspection = useCallback(() => {
     setTimerState('inspection');
     setInspectionRemainingMs(15000);
-    // Don't clobber an inspection clock already started on entering Timed mode (connected
-    // flow) — an incidental screen touch must not reset how long you've been inspecting.
-    if (inspectionStartRef.current === 0) inspectionStartRef.current = performance.now();
+    inspectionStartRef.current = performance.now();
   }, []);
+
 
   const startSolve = useCallback((opts?: { preserveTracking?: boolean }) => {
     if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
@@ -55,6 +63,8 @@ export function useTimer() {
     const now = performance.now();
     startTimestampRef.current = now;
     pauseStartRef.current = 0;
+    pendingSolveDataRef.current = null;
+    setPendingMicroSolve(null);
     currentPhaseRef.current = 'cross';
     phaseTimingsRef.current = [{ phase: 'cross', start: now, end: now }];
 
@@ -149,29 +159,17 @@ export function useTimer() {
     setInspectionRemainingMs(15000);
     inspectionStartRef.current = 0;
     pauseStartRef.current = 0;
+    pendingSolveDataRef.current = null;
+    setPendingMicroSolve(null);
   }, [endSolveTracking, resetSolveTracking]);
 
-  const stopTimer = useCallback(async () => {
-    if (timerState !== 'running' && timerState !== 'paused') return;
-    if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
-
-    const endNow = performance.now();
-    const finalSolveTimeMs = timerState === 'paused' ? elapsedMs : Math.round(endNow - startTimestampRef.current);
-    setElapsedMs(finalSolveTimeMs);
-    setTimerState('completed');
-
-    const inspectionDuration = inspectionStartRef.current > 0 ? Math.round(startTimestampRef.current - inspectionStartRef.current) : 0;
-
-    // Prefer the dedicated CFOP tracker's move history (correct phase labels); fall back
-    // to the raw store history for cubes/protocols where tracking couldn't be seeded.
-    const tracker = useCubeStore.getState().solveTracker;
-    const moves =
-      tracker.active && tracker.moveHistory.length > 0
-        ? tracker.moveHistory
-        : useCubeStore.getState().moveHistory;
-    const isCubeConnected = smartCube.isConnected;
+  const commitSolveRecord = useCallback(async (
+    finalSolveTimeMs: number,
+    inspectionDuration: number,
+    moves: any[],
+    isCubeConnected: boolean
+  ) => {
     endSolveTracking();
-
     const telemetry = calculateSolveTelemetry(
       inspectionDuration,
       moves,
@@ -198,12 +196,91 @@ export function useTimer() {
         particleCount: 50,
         spread: 60,
         origin: { y: 0.7 },
-        colors: ['#F3F1EA', '#009A44', '#0057B8', '#FFD500', '#E8A200', '#C8102E'],
+        colors: ['#F3F1EA', '#009A44', '#0057B8', '#FFD500', '#A855F7', '#C8102E'],
       });
+
     } catch (err) {
       console.error('Failed to save solve record:', err);
     }
-  }, [timerState, elapsedMs, smartCube.isConnected, currentProfileId, scrambleMoves, endSolveTracking]);
+  }, [currentProfileId, scrambleMoves, endSolveTracking]);
+
+  const stopTimer = useCallback(async (opts?: { force?: boolean }) => {
+    if (timerState !== 'running' && timerState !== 'paused') return;
+    if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
+
+    const endNow = performance.now();
+    const finalSolveTimeMs = timerState === 'paused' ? elapsedMs : Math.round(endNow - startTimestampRef.current);
+    setElapsedMs(finalSolveTimeMs);
+
+    const inspectionDuration = inspectionStartRef.current > 0 ? Math.round(startTimestampRef.current - inspectionStartRef.current) : 0;
+
+    const tracker = useCubeStore.getState().solveTracker;
+    const moves =
+      tracker.active && tracker.moveHistory.length > 0
+        ? tracker.moveHistory
+        : useCubeStore.getState().moveHistory;
+    const isCubeConnected = smartCube.isConnected;
+
+    // Check for accidental micro-solves (< 3 moves on smart cube, or < 1000ms)
+    const isMicroSolve = !opts?.force && (
+      (isCubeConnected && moves.length < 3) ||
+      (!isCubeConnected && finalSolveTimeMs < 1000) ||
+      finalSolveTimeMs < 800
+    );
+
+    if (isMicroSolve) {
+      pendingSolveDataRef.current = {
+        moves,
+        finalSolveTimeMs,
+        inspectionDuration,
+        isCubeConnected,
+      };
+      setPendingMicroSolve({
+        moveCount: moves.length,
+        timeMs: finalSolveTimeMs,
+      });
+      setTimerState('micro-solve');
+      return;
+    }
+
+    setTimerState('completed');
+    await commitSolveRecord(finalSolveTimeMs, inspectionDuration, moves, isCubeConnected);
+  }, [timerState, elapsedMs, smartCube.isConnected, commitSolveRecord]);
+
+  const confirmSaveMicroSolve = useCallback(async () => {
+    if (!pendingSolveDataRef.current) return;
+    const { finalSolveTimeMs, inspectionDuration, moves, isCubeConnected } = pendingSolveDataRef.current;
+    setPendingMicroSolve(null);
+    pendingSolveDataRef.current = null;
+    setTimerState('completed');
+    await commitSolveRecord(finalSolveTimeMs, inspectionDuration, moves, isCubeConnected);
+  }, [commitSolveRecord]);
+
+  const discardMicroSolve = useCallback(() => {
+    discardSolve();
+  }, [discardSolve]);
+
+  const togglePlusTwo = useCallback(async () => {
+    if (!lastCompletedSolve) return;
+    const newPlusTwo = !lastCompletedSolve.plusTwo;
+    try {
+      await updateSolve(lastCompletedSolve.id, { plusTwo: newPlusTwo });
+      setLastCompletedSolve((prev) => prev ? { ...prev, plusTwo: newPlusTwo } : null);
+    } catch (err) {
+      console.error('Failed to toggle +2 penalty:', err);
+    }
+  }, [lastCompletedSolve]);
+
+  const toggleDnf = useCallback(async () => {
+    if (!lastCompletedSolve) return;
+    const newDnf = !lastCompletedSolve.dnf;
+    try {
+      await updateSolve(lastCompletedSolve.id, { dnf: newDnf });
+      setLastCompletedSolve((prev) => prev ? { ...prev, dnf: newDnf } : null);
+    } catch (err) {
+      console.error('Failed to toggle DNF:', err);
+    }
+  }, [lastCompletedSolve]);
 
   const resetTimer = useCallback(() => {
     if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
@@ -212,7 +289,21 @@ export function useTimer() {
     setInspectionRemainingMs(15000);
     inspectionStartRef.current = 0;
     pauseStartRef.current = 0;
+    pendingSolveDataRef.current = null;
+    setPendingMicroSolve(null);
   }, []);
+
+  const deleteLastSolve = useCallback(async () => {
+    if (!lastCompletedSolve) return;
+    try {
+      await deleteSolve(lastCompletedSolve.id);
+      setLastCompletedSolve(null);
+      resetTimer();
+    } catch (err) {
+      console.error('Failed to delete solve:', err);
+    }
+  }, [lastCompletedSolve, resetTimer]);
+
 
   // Entering Timed mode with a connected cube: ignore any turns made before now (e.g.
   // finishing a scramble) so the timer doesn't auto-start on stale moves, start the
@@ -227,7 +318,7 @@ export function useTimer() {
     if (timerState !== 'idle') return;
 
     lastProcessedMoveTsRef.current = useCubeStore.getState().lastMoveTimestamp || 0;
-    if (inspectionStartRef.current === 0) inspectionStartRef.current = performance.now();
+    inspectionStartRef.current = 0;
     resetSolveTracking();
 
     // Seed the CFOP phase tracker from the clean `default · scramble · z2` frame (the raw
@@ -305,7 +396,6 @@ export function useTimer() {
     }
   }, [timerState, solvedNow, stopTimer]);
 
-
   const updateRunningTime = useCallback(() => {
     if (timerState === 'running') {
       const now = performance.now();
@@ -314,6 +404,9 @@ export function useTimer() {
       animFrameRef.current = requestAnimationFrame(updateRunningTime);
     } else if (timerState === 'inspection') {
       const now = performance.now();
+      if (inspectionStartRef.current === 0) {
+        inspectionStartRef.current = now;
+      }
       const spent = now - inspectionStartRef.current;
       const remaining = Math.max(0, 15000 - spent);
       setInspectionRemainingMs(remaining);
@@ -326,6 +419,7 @@ export function useTimer() {
       }
     }
   }, [timerState, startSolve]);
+
 
   useEffect(() => {
     if (timerState === 'running' || timerState === 'inspection') {
@@ -340,7 +434,7 @@ export function useTimer() {
 
   // Handle Spacebar & Touch Hold-to-Start interactions
   const handleHoldStart = useCallback(() => {
-    if (timerState === 'paused') {
+    if (timerState === 'paused' || timerState === 'micro-solve') {
       return;
     }
 
@@ -372,7 +466,7 @@ export function useTimer() {
   }, [timerState, smartCube.isConnected, pauseTimer, stopTimer, resetTimer, startInspection]);
 
   const handleHoldRelease = useCallback(() => {
-    if (timerState === 'paused') {
+    if (timerState === 'paused' || timerState === 'micro-solve') {
       return;
     }
 
@@ -393,6 +487,7 @@ export function useTimer() {
     elapsedMs,
     inspectionRemainingMs,
     lastCompletedSolve,
+    pendingMicroSolve,
     startInspection,
     startSolve,
     stopTimer,
@@ -400,8 +495,14 @@ export function useTimer() {
     resumeTimer,
     saveDnfSolve,
     discardSolve,
+    confirmSaveMicroSolve,
+    discardMicroSolve,
+    togglePlusTwo,
+    toggleDnf,
+    deleteLastSolve,
     resetTimer,
     handleHoldStart,
     handleHoldRelease,
   };
 }
+

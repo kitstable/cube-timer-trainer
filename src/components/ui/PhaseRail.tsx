@@ -64,11 +64,12 @@ export const PhaseRail: React.FC<PhaseRailProps> = ({ currentPhase, solvedSlots 
     // PLL
     {
       id: 'pll',
-      color: COLORS.gold,
+      color: COLORS.purple,
       isDone: currentPhase === 'solved',
       isCurrent: currentPhase === 'pll' || currentPhase === 'auf',
     },
   ];
+
 
   return (
     <div className="w-full mb-6">

@@ -107,4 +107,23 @@ describe('DNF Solves and Stats Calculations', () => {
     const elapsedAfterResume = checkTime - adjustedStartTimestamp;
     expect(elapsedAfterResume).toBe(6000); // 5000ms before pause + 1000ms after resume
   });
+
+  it('calculates inspection remaining smoothly from inspection start timestamp', () => {
+    const inspectionStart = 10000;
+    // At start of inspection
+    const now0 = 10000;
+    const remaining0 = Math.max(0, 15000 - (now0 - inspectionStart));
+    expect(remaining0).toBe(15000);
+
+    // After 2.5 seconds of inspecting
+    const now1 = 12500;
+    const remaining1 = Math.max(0, 15000 - (now1 - inspectionStart));
+    expect(remaining1).toBe(12500);
+
+    // After 15 seconds
+    const now2 = 25000;
+    const remaining2 = Math.max(0, 15000 - (now2 - inspectionStart));
+    expect(remaining2).toBe(0);
+  });
 });
+

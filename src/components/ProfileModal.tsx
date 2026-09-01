@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { User, Plus, Check, Trash2, X } from 'lucide-react';
+import { User, Plus, Check, Trash2, X, Pencil } from 'lucide-react';
 import { useAppStore } from '../store/useAppStore';
-import { getAllProfiles, createProfile, deleteProfile } from '../db/repository';
+import { getAllProfiles, createProfile, deleteProfile, updateProfile, getProfileStats } from '../db/repository';
 import type { Profile } from '../types/db';
+import { formatTime } from '../utils/telemetryCalculator';
 
 interface ProfileModalProps {
   isOpen: boolean;
@@ -12,13 +13,22 @@ interface ProfileModalProps {
 export const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose }) => {
   const { currentProfileId, setProfileId } = useAppStore();
   const [profiles, setProfiles] = useState<Profile[]>([]);
+  const [profileStats, setProfileStats] = useState<Record<string, { solveCount: number; bestTime: number | null }>>({});
   const [newProfileName, setNewProfileName] = useState('');
   const [isCreating, setIsCreating] = useState(false);
+  const [editingProfileId, setEditingProfileId] = useState<string | null>(null);
+  const [editingName, setEditingName] = useState('');
 
   const loadProfiles = async () => {
     try {
       const list = await getAllProfiles();
       setProfiles(list);
+
+      const statsMap: Record<string, { solveCount: number; bestTime: number | null }> = {};
+      for (const p of list) {
+        statsMap[p.id] = await getProfileStats(p.id);
+      }
+      setProfileStats(statsMap);
     } catch (err) {
       console.warn('Failed to load profiles:', err);
     }
@@ -27,6 +37,8 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose }) =
   useEffect(() => {
     if (isOpen) {
       loadProfiles();
+      setIsCreating(false);
+      setEditingProfileId(null);
     }
   }, [isOpen]);
 
@@ -45,16 +57,45 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose }) =
     }
   };
 
-  const handleDelete = async (id: string, e: React.MouseEvent) => {
+  const handleStartRename = (p: Profile, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setEditingProfileId(p.id);
+    setEditingName(p.name);
+  };
+
+  const handleSaveRename = async (id: string, e: React.FormEvent | React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!editingName.trim()) return;
+
+    try {
+      await updateProfile(id, editingName.trim());
+      setEditingProfileId(null);
+      await loadProfiles();
+    } catch (err) {
+      console.error('Failed to rename profile:', err);
+    }
+  };
+
+  const handleCancelRename = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setEditingProfileId(null);
+  };
+
+  const handleDelete = async (p: Profile, e: React.MouseEvent) => {
     e.stopPropagation();
     if (profiles.length <= 1) {
       alert('You must keep at least one profile.');
       return;
     }
-    if (confirm('Delete this profile and all its solves?')) {
-      await deleteProfile(id);
-      if (currentProfileId === id) {
-        const remaining = profiles.filter((p) => p.id !== id);
+    const count = profileStats[p.id]?.solveCount ?? 0;
+    const msg = count > 0
+      ? `Delete profile "${p.name}" and all ${count} of its solves?`
+      : `Delete profile "${p.name}"?`;
+    if (confirm(msg)) {
+      await deleteProfile(p.id);
+      if (currentProfileId === p.id) {
+        const remaining = profiles.filter((item) => item.id !== p.id);
         if (remaining.length > 0) setProfileId(remaining[0].id);
       }
       await loadProfiles();
@@ -79,9 +120,46 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose }) =
           </button>
         </div>
 
-        <div className="space-y-2 mb-4 max-h-[220px] overflow-y-auto">
+        <div className="space-y-2 mb-4 max-h-[260px] overflow-y-auto">
           {profiles.map((p) => {
             const isSelected = p.id === currentProfileId;
+            const isEditing = editingProfileId === p.id;
+            const stats = profileStats[p.id];
+
+            if (isEditing) {
+              return (
+                <form
+                  key={p.id}
+                  onSubmit={(e) => handleSaveRename(p.id, e)}
+                  className="p-2.5 rounded-xl border border-[var(--white)]/40 bg-[var(--surface-2)] flex items-center gap-2"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <input
+                    type="text"
+                    value={editingName}
+                    onChange={(e) => setEditingName(e.target.value)}
+                    autoFocus
+                    className="flex-1 px-2.5 py-1 text-sm rounded-lg bg-[var(--surface)] border border-[var(--border)] text-[var(--text)] focus:outline-hidden focus:border-[var(--white)]"
+                  />
+                  <button
+                    type="submit"
+                    title="Save name"
+                    className="p-1.5 rounded-lg bg-[var(--white)] text-[var(--bg)] hover:opacity-90 cursor-pointer"
+                  >
+                    <Check className="w-3.5 h-3.5" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleCancelRename}
+                    title="Cancel"
+                    className="p-1.5 rounded-lg bg-[var(--surface)] text-[var(--text-muted)] hover:text-[var(--text)] cursor-pointer"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </form>
+              );
+            }
+
             return (
               <div
                 key={p.id}
@@ -95,21 +173,41 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose }) =
                     : 'bg-[var(--surface-2)]/40 border-[var(--border)] text-[var(--text-muted)] hover:text-[var(--text)]'
                 }`}
               >
-                <div className="flex items-center gap-2.5">
-                  <span className="font-sans font-medium text-sm text-[var(--text)]">{p.name}</span>
-                  {isSelected && (
-                    <span className="px-1.5 py-0.2 rounded text-[10px] bg-[var(--green)]/20 text-[var(--green)]">
-                      Active
-                    </span>
-                  )}
+                <div className="flex flex-col min-w-0 pr-2">
+                  <div className="flex items-center gap-2">
+                    <span className="font-sans font-medium text-sm text-[var(--text)] truncate">{p.name}</span>
+                    {isSelected && (
+                      <span className="px-1.5 py-0.2 shrink-0 rounded text-[10px] bg-[var(--green)]/20 text-[var(--green)]">
+                        Active
+                      </span>
+                    )}
+                  </div>
+                  <div className="text-[11px] text-[var(--text-muted)] mt-0.5 font-mono">
+                    {stats ? (
+                      <span>
+                        {stats.solveCount} {stats.solveCount === 1 ? 'solve' : 'solves'}
+                        {stats.bestTime !== null ? ` · Best: ${formatTime(stats.bestTime).full}s` : ''}
+                      </span>
+                    ) : (
+                      'Loading…'
+                    )}
+                  </div>
                 </div>
 
-                <div className="flex items-center gap-2">
-                  {isSelected && <Check className="w-4 h-4 text-[var(--green)]" />}
+                <div className="flex items-center gap-1 shrink-0">
+                  <button
+                    onClick={(e) => handleStartRename(p, e)}
+                    title="Rename profile"
+                    className="p-1.5 text-[var(--text-muted)] hover:text-[var(--text)] transition-colors cursor-pointer rounded-lg hover:bg-[var(--surface)]"
+                  >
+                    <Pencil className="w-3.5 h-3.5" />
+                  </button>
+
                   {profiles.length > 1 && (
                     <button
-                      onClick={(e) => handleDelete(p.id, e)}
-                      className="p-1 text-[var(--text-muted)] hover:text-[var(--red)] transition-colors cursor-pointer"
+                      onClick={(e) => handleDelete(p, e)}
+                      title="Delete profile"
+                      className="p-1.5 text-[var(--text-muted)] hover:text-[var(--red)] transition-colors cursor-pointer rounded-lg hover:bg-[var(--surface)]"
                     >
                       <Trash2 className="w-3.5 h-3.5" />
                     </button>
@@ -159,3 +257,4 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose }) =
     </div>
   );
 };
+
