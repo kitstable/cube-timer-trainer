@@ -24,8 +24,10 @@ export const TimedSolveView: React.FC = () => {
     pendingMicroSolve,
     startInspection,
     startSolve,
+    stopTimer,
     pauseTimer,
     resumeTimer,
+
     saveDnfSolve,
     discardSolve,
     confirmSaveMicroSolve,
@@ -359,7 +361,11 @@ export const TimedSolveView: React.FC = () => {
               onClick={(e) => {
                 e.stopPropagation();
                 if (timerState === 'running') {
-                  pauseTimer();
+                  if (smartCube.isConnected) {
+                    pauseTimer();
+                  } else {
+                    stopTimer();
+                  }
                 }
               }}
               onMouseDown={(e) => e.stopPropagation()}
@@ -369,6 +375,7 @@ export const TimedSolveView: React.FC = () => {
               <Square className="w-4 h-4 fill-current" />
               <span>Stop</span>
             </button>
+
           ) : timerState === 'completed' && lastCompletedSolve ? (
             <div className="space-y-2">
               {/* Quick Action Bar: +2, DNF, Delete */}
