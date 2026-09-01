@@ -384,17 +384,19 @@ export function useTimer() {
     }
   }, [monotonicPhase, timerState]);
 
-  // Handle completion when cube becomes solved in running state. Prefer the dedicated
+  // Handle completion when smart cube becomes solved in running state. Prefer the dedicated
   // solve tracker (correct CFOP frame) when it's active; otherwise fall back to the raw
-  // store status (manual / non-connected solves).
+  // store status. Manual solves (no smart cube) must NOT auto-stop here since the physical
+  // cube's state is unknown.
   const solvedNow = solveTracker.active
     ? solveTracker.status.isFullySolved
     : phaseStatus.isFullySolved;
   useEffect(() => {
-    if (timerState === 'running' && solvedNow) {
+    if (smartCube.isConnected && timerState === 'running' && solvedNow) {
       stopTimer();
     }
-  }, [timerState, solvedNow, stopTimer]);
+  }, [smartCube.isConnected, timerState, solvedNow, stopTimer]);
+
 
   const updateRunningTime = useCallback(() => {
     if (timerState === 'running') {
