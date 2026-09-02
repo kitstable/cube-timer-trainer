@@ -8,11 +8,19 @@ import { useSolverWorker } from '../../hooks/useSolverWorker';
 import {
   getKPuzzle,
   getPostZ2Pattern,
+  getDefaultPattern,
   applyAlgToPattern,
   relabelMoveZ2,
   isPatternSolved,
 } from '../../utils/kpuzzleHelper';
-import { isOLLSolved, isFullySolved } from '../../solver/cfopInvariants';
+import {
+  isOLLSolved,
+  isFullySolved,
+  isCrossSolved,
+  isSlotSolved,
+  preservesProgress,
+  type F2LSlot,
+} from '../../solver/cfopInvariants';
 import {
   buildTwoLookDrills,
   drillPredicate,
@@ -28,22 +36,30 @@ import algorithmData from '../../data/cfop-algorithms.json';
 
 type RepStage = 'idle' | 'scramble' | 'attempt' | 'result';
 
+/** 'postZ2' = yellow-up view (LL drills); 'raw' = white-up view (cross). */
+type Frame = 'postZ2' | 'raw';
+
 interface ActiveRep {
   caseName: string;
   subset: string;
   algorithm: string;
+  frame: Frame;
+  /** F2L slot being drilled this rep (F2L only). */
+  f2lSlot?: F2LSlot;
   /** Setup scramble in the raw (white-up, smart-cube) frame — drives the connected guide. */
   scrambleRaw: string[];
-  /** Same scramble in the post-z2 (yellow-up) frame — drives the no-cube 3D view + attempt. */
-  scramblePostZ2: string[];
+  /** Setup scramble in the rep's own view frame — drives the no-cube ribbon + 3D + attempt. */
+  scrambleView: string[];
 }
 
 const SUB_MODES: { id: TrainingPhase; label: string; ready: boolean }[] = [
   { id: 'OLL', label: 'OLL', ready: true },
   { id: 'PLL', label: 'PLL', ready: true },
-  { id: 'F2L', label: 'F2L', ready: false },
-  { id: 'cross', label: 'Cross', ready: false },
+  { id: 'F2L', label: 'F2L', ready: true },
+  { id: 'cross', label: 'Cross', ready: true },
 ];
+
+const F2L_SLOTS: F2LSlot[] = ['FR', 'FL', 'BR', 'BL'];
 
 const TWO_LOOK_DRILLS = buildTwoLookDrills(algorithmData as any);
 const DRILLS_BY_SUBMODE: Record<'OLL' | 'PLL', TwoLookDrillId[]> = {
@@ -51,14 +67,19 @@ const DRILLS_BY_SUBMODE: Record<'OLL' | 'PLL', TwoLookDrillId[]> = {
   PLL: ['pll-corners', 'pll-edges'],
 };
 
+type Kind = 'full' | 'twolook' | 'f2l' | 'cross';
+
 interface DrillConfig {
-  isTwoLook: boolean;
-  caseSource: 'OLL' | 'PLL' | 'OLL_2LOOK_EDGE';
-  /** Every case this drill can present (for the include/exclude chips). */
+  kind: Kind;
+  frame: Frame;
+  /** How the setup scramble is generated: a worker case source, or a random WCA scramble. */
+  caseSource: 'OLL' | 'PLL' | 'OLL_2LOOK_EDGE' | 'F2L' | 'wca';
+  /** Every case this drill can present (for the include/exclude chips). Empty for cross. */
   allCaseNames: string[];
-  /** Cases actually in play after the allowlist. */
+  /** Cases actually in play after the allowlist. Empty for cross. */
   poolCaseNames: string[];
-  predicate: (p: KPattern) => boolean;
+  /** `start` is the post-z2 pattern at the moment the attempt began (for F2L progress checks). */
+  predicate: (p: KPattern, start: KPattern) => boolean;
   /** Alg buttons for the attempt, or `null` to use the raw face keypad. */
   attemptAlgs: AlgOption[] | null;
   goalLabel: string;
@@ -70,11 +91,13 @@ export const TrainingView: React.FC = () => {
     trainingMethod,
     trainingCaseFilter,
     trainingCaseAllow,
+    trainingF2lSlot,
     trainingStats,
     setTrainingSubMode,
     setTrainingMethod,
     setTrainingCaseFilter,
     setTrainingCaseAllow,
+    setTrainingF2lSlot,
     recordTrainingAttempt,
     setTrackTarget,
     resetPhysicalTrack,
@@ -84,35 +107,68 @@ export const TrainingView: React.FC = () => {
     currentProfileId,
   } = useAppStore();
   const { smartCube, visualAlg, physicalPattern } = useCubeStore();
-  const { generateTrainingScramble, isReady } = useSolverWorker();
+  const { generateTrainingScramble, generateScramble, solveCross, findHint, isReady } = useSolverWorker();
   const isDesktop = useIsDesktop();
 
   const connected = smartCube.isConnected;
   const phaseIsCaseBased = trainingSubMode === 'OLL' || trainingSubMode === 'PLL';
 
-  // Full OLL/PLL case list (for the subset dropdown).
+  // Case list for the active phase's subset dropdown (OLL / PLL / F2L).
   const fullCaseList = useMemo(() => {
-    if (!phaseIsCaseBased) return [];
-    const entries = (algorithmData as unknown as Record<string, { name: string; subset?: string }[]>)[
-      trainingSubMode
-    ];
-    return entries.map((e) => ({ name: e.name, subset: e.subset || trainingSubMode }));
+    const key = trainingSubMode === 'F2L' ? 'F2L' : phaseIsCaseBased ? trainingSubMode : null;
+    if (!key) return [];
+    const entries = (algorithmData as unknown as Record<string, { name: string; subset?: string }[]>)[key];
+    return entries.map((e) => ({ name: e.name, subset: e.subset || key }));
   }, [phaseIsCaseBased, trainingSubMode]);
 
   const subsets = useMemo(() => Array.from(new Set(fullCaseList.map((c) => c.subset))).sort(), [fullCaseList]);
 
+  const f2lSlotOf = (name: string): F2LSlot =>
+    name.includes('Front Left') ? 'FL' : name.includes('Back Right') ? 'BR' : name.includes('Back Left') ? 'BL' : 'FR';
+
   const config: DrillConfig | null = useMemo(() => {
+    if (trainingSubMode === 'cross') {
+      return {
+        kind: 'cross',
+        frame: 'raw',
+        caseSource: 'wca',
+        allCaseNames: [],
+        poolCaseNames: [],
+        predicate: (p) => isCrossSolved(p),
+        attemptAlgs: null,
+        goalLabel: 'Solve the cross',
+      };
+    }
+    if (trainingSubMode === 'F2L') {
+      const bySlot =
+        trainingF2lSlot === 'random'
+          ? fullCaseList
+          : fullCaseList.filter((c) => f2lSlotOf(c.name) === trainingF2lSlot);
+      const bySubset = trainingCaseFilter ? bySlot.filter((c) => c.subset === trainingCaseFilter) : bySlot;
+      return {
+        kind: 'f2l',
+        frame: 'postZ2',
+        caseSource: 'F2L',
+        allCaseNames: fullCaseList.map((c) => c.name),
+        poolCaseNames: bySubset.map((c) => c.name),
+        // Real check needs the rep's slot — see `predicate` below.
+        predicate: () => false,
+        attemptAlgs: null,
+        goalLabel: 'Solve the F2L pair',
+      };
+    }
     if (!phaseIsCaseBased) return null;
     if (trainingMethod === 'full') {
       const names = (trainingCaseFilter ? fullCaseList.filter((c) => c.subset === trainingCaseFilter) : fullCaseList).map(
         (c) => c.name
       );
       return {
-        isTwoLook: false,
+        kind: 'full',
+        frame: 'postZ2',
         caseSource: trainingSubMode as 'OLL' | 'PLL',
         allCaseNames: fullCaseList.map((c) => c.name),
         poolCaseNames: names,
-        predicate: trainingSubMode === 'OLL' ? isOLLSolved : isFullySolved,
+        predicate: trainingSubMode === 'OLL' ? (p) => isOLLSolved(p) : (p) => isFullySolved(p),
         attemptAlgs: null,
         goalLabel: trainingSubMode === 'OLL' ? 'Orient the last layer' : 'Permute the last layer',
       };
@@ -120,16 +176,18 @@ export const TrainingView: React.FC = () => {
     const drill = TWO_LOOK_DRILLS[trainingMethod as TwoLookDrillId];
     if (!drill) return null;
     const pool = trainingCaseAllow ? drill.caseNames.filter((n) => trainingCaseAllow.includes(n)) : drill.caseNames;
+    const pred = drillPredicate(drill.id);
     return {
-      isTwoLook: true,
+      kind: 'twolook',
+      frame: 'postZ2',
       caseSource: drill.caseSource,
       allCaseNames: drill.caseNames,
       poolCaseNames: pool.length > 0 ? pool : drill.caseNames,
-      predicate: drillPredicate(drill.id),
+      predicate: (p) => pred(p),
       attemptAlgs: drill.algs,
       goalLabel: drill.goal,
     };
-  }, [phaseIsCaseBased, trainingMethod, trainingSubMode, trainingCaseFilter, trainingCaseAllow, fullCaseList]);
+  }, [phaseIsCaseBased, trainingMethod, trainingSubMode, trainingCaseFilter, trainingCaseAllow, trainingF2lSlot, fullCaseList]);
 
   const [stage, setStage] = useState<RepStage>('idle');
   const [rep, setRep] = useState<ActiveRep | null>(null);
@@ -146,10 +204,24 @@ export const TrainingView: React.FC = () => {
   const moveHistoryBaselineRef = useRef<number>(0);
   const [result, setResult] = useState<{ solved: boolean; timeMs: number; moves: number } | null>(null);
 
+  /** Solved seed for the rep's view frame ('raw' = white-up default, 'postZ2' = yellow-up). */
+  const viewSeed = useCallback(
+    (frame: Frame) => (frame === 'raw' ? getDefaultPattern() : getPostZ2Pattern()),
+    []
+  );
+  const toPostZ2 = useCallback(
+    (p: KPattern, frame: Frame) => (frame === 'raw' ? applyAlgToPattern(p, 'z2') : p),
+    []
+  );
+
+  // No-cube attempt state, in the rep's view frame.
   const attemptPattern = useMemo(() => {
     if (stage !== 'attempt' || !rep || connected) return null;
-    return applyAlgToPattern(getPostZ2Pattern(), [...rep.scramblePostZ2, ...attemptActions].join(' '));
-  }, [stage, rep, connected, attemptActions]);
+    return applyAlgToPattern(viewSeed(rep.frame), [...rep.scrambleView, ...attemptActions].join(' '));
+  }, [stage, rep, connected, attemptActions, viewSeed]);
+
+  /** Post-z2 pattern at the moment the attempt began — F2L `preservesProgress` needs it. */
+  const attemptStartPostZ2Ref = useRef<KPattern | null>(null);
 
   const attemptMoveCount = useMemo(
     () => attemptActions.join(' ').trim().split(/\s+/).filter(Boolean).length,
@@ -172,9 +244,18 @@ export const TrainingView: React.FC = () => {
     setShowAlg(false);
     setHint(null);
     resetPhysicalTrack();
-  }, [trainingSubMode, trainingMethod, resetPhysicalTrack]);
+  }, [trainingSubMode, trainingMethod, trainingF2lSlot, resetPhysicalTrack]);
 
-  const predicate = config?.predicate ?? isOLLSolved;
+  /** The completion check for the current rep, taking a post-z2 pattern + the attempt-start pattern. */
+  const predicate = useCallback(
+    (pPostZ2: KPattern, startPostZ2: KPattern): boolean => {
+      if (config?.kind === 'f2l' && rep?.f2lSlot) {
+        return isSlotSolved(pPostZ2, rep.f2lSlot) && preservesProgress(startPostZ2, pPostZ2);
+      }
+      return config ? config.predicate(pPostZ2, startPostZ2) : isOLLSolved(pPostZ2);
+    },
+    [config, rep]
+  );
 
   const finishRep = useCallback(
     (solved: boolean, moves: string[]) => {
@@ -187,8 +268,10 @@ export const TrainingView: React.FC = () => {
         void saveTrainingRep({
           profileId: currentProfileId,
           phase: trainingSubMode,
-          method: trainingMethod,
+          method:
+            trainingSubMode === 'F2L' ? `slot:${rep.f2lSlot}` : trainingSubMode === 'cross' ? 'full' : trainingMethod,
           caseName: rep.caseName,
+          slot: rep.f2lSlot,
           moves,
           timeMs,
           success: solved,
@@ -207,19 +290,37 @@ export const TrainingView: React.FC = () => {
     setShowAlg(false);
     setHint(null);
     try {
-      const res = await generateTrainingScramble(config.caseSource, config.poolCaseNames);
-      const scramblePostZ2 = res.moves;
-      const scrambleRaw = scramblePostZ2.map(relabelMoveZ2);
-      setRep({
-        caseName: res.caseName,
-        subset: res.subset,
-        algorithm: res.algorithm || res.algorithmSimplified,
-        scrambleRaw,
-        scramblePostZ2,
-      });
+      let next: ActiveRep;
+      if (config.kind === 'cross') {
+        const s = await generateScramble();
+        next = {
+          caseName: 'Cross',
+          subset: 'Cross',
+          algorithm: '',
+          frame: 'raw',
+          scrambleRaw: s.moves,
+          scrambleView: s.moves,
+        };
+      } else {
+        const res = await generateTrainingScramble(
+          config.caseSource as 'OLL' | 'PLL' | 'F2L' | 'OLL_2LOOK_EDGE',
+          config.poolCaseNames
+        );
+        const scrambleView = res.moves; // post-z2 (matcher frame)
+        next = {
+          caseName: res.caseName,
+          subset: res.subset,
+          algorithm: res.algorithm || res.algorithmSimplified,
+          frame: 'postZ2',
+          f2lSlot: config.kind === 'f2l' ? f2lSlotOf(res.caseName) : undefined,
+          scrambleRaw: scrambleView.map(relabelMoveZ2),
+          scrambleView,
+        };
+      }
+      setRep(next);
       setStepIdx(0);
       setAttemptActions([]);
-      setTrackTarget(scrambleRaw);
+      setTrackTarget(next.scrambleRaw);
       resetPhysicalTrack();
       setStage('scramble');
     } catch (err: any) {
@@ -227,16 +328,24 @@ export const TrainingView: React.FC = () => {
     } finally {
       setIsGenerating(false);
     }
-  }, [config, isReady, generateTrainingScramble, setTrackTarget, resetPhysicalTrack]);
+  }, [config, isReady, generateTrainingScramble, generateScramble, setTrackTarget, resetPhysicalTrack]);
 
   const enterAttempt = useCallback(() => {
     if (!rep) return;
     attemptStartRef.current = performance.now();
     setAttemptActions([]);
     setHint(null);
-    if (connected) moveHistoryBaselineRef.current = useCubeStore.getState().moveHistory.length;
+    if (connected) {
+      moveHistoryBaselineRef.current = useCubeStore.getState().moveHistory.length;
+      attemptStartPostZ2Ref.current = physicalPattern ? applyAlgToPattern(physicalPattern, 'z2') : null;
+    } else {
+      attemptStartPostZ2Ref.current = toPostZ2(
+        applyAlgToPattern(viewSeed(rep.frame), rep.scrambleView.join(' ')),
+        rep.frame
+      );
+    }
     setStage('attempt');
-  }, [rep, connected]);
+  }, [rep, connected, physicalPattern, viewSeed, toPostZ2]);
 
   // Connected: setup scramble complete -> start the attempt.
   useEffect(() => {
@@ -249,7 +358,8 @@ export const TrainingView: React.FC = () => {
   // smart-cube frame; `· z2` brings it into the post-z2 frame the predicates expect.
   useEffect(() => {
     if (stage !== 'attempt' || !connected || !physicalPattern) return;
-    if (predicate(applyAlgToPattern(physicalPattern, 'z2'))) {
+    const start = attemptStartPostZ2Ref.current;
+    if (start && predicate(applyAlgToPattern(physicalPattern, 'z2'), start)) {
       const moves = useCubeStore
         .getState()
         .moveHistory.slice(moveHistoryBaselineRef.current)
@@ -263,13 +373,14 @@ export const TrainingView: React.FC = () => {
       if (stage !== 'attempt' || connected || !rep) return;
       const nextActions = [...attemptActions, alg];
       setHint(null);
-      const next = applyAlgToPattern(getPostZ2Pattern(), [...rep.scramblePostZ2, ...nextActions].join(' '));
+      const nextView = applyAlgToPattern(viewSeed(rep.frame), [...rep.scrambleView, ...nextActions].join(' '));
+      const start = attemptStartPostZ2Ref.current;
       setAttemptActions(nextActions);
-      if (predicate(next)) {
+      if (start && predicate(toPostZ2(nextView, rep.frame), start)) {
         finishRep(true, nextActions.join(' ').trim().split(/\s+/).filter(Boolean));
       }
     },
-    [stage, connected, rep, attemptActions, predicate, finishRep]
+    [stage, connected, rep, attemptActions, predicate, finishRep, viewSeed, toPostZ2]
   );
 
   const undoAttemptAction = useCallback(() => {
@@ -278,28 +389,58 @@ export const TrainingView: React.FC = () => {
     setHint(null);
   }, [stage, connected, attemptActions.length]);
 
-  const showHint = useCallback(() => {
-    if (!config?.attemptAlgs) return;
-    const start = connected
+  /** Current attempt state in the post-z2 frame (no-cube), or null when connected/not attempting. */
+  const currentPostZ2 = useMemo(() => {
+    if (connected) return physicalPattern ? applyAlgToPattern(physicalPattern, 'z2') : null;
+    if (!rep || !attemptPattern) return null;
+    return toPostZ2(attemptPattern, rep.frame);
+  }, [connected, physicalPattern, rep, attemptPattern, toPostZ2]);
+
+  const showHint = useCallback(async () => {
+    if (!config || !rep) return;
+    const src = connected
       ? physicalPattern
         ? applyAlgToPattern(physicalPattern, 'z2')
         : null
-      : attemptPattern;
-    if (!start) return;
-    const combo = solveWithAlgSet(start, config.attemptAlgs, config.predicate, 5);
+      : currentPostZ2 ?? attemptStartPostZ2Ref.current;
+    if (config.kind === 'cross') {
+      if (!src) return;
+      try {
+        const res = await solveCross(src.patternData);
+        const moves = (res.moves ?? []).map(relabelMoveZ2); // post-z2 -> white-up raw
+        setHint(moves.length ? [{ label: moves.join(' '), alg: '' }] : 'none');
+      } catch {
+        setHint('none');
+      }
+      return;
+    }
+    if (config.kind === 'f2l') {
+      if (!src || !rep.f2lSlot) return;
+      try {
+        const res = await findHint('f2l-1', src.patternData, rep.f2lSlot, '2look', 'simplified');
+        const moves: string[] = res?.moves ?? [];
+        setHint(moves.length ? [{ label: moves.join(' '), alg: '' }] : 'none');
+      } catch {
+        setHint('none');
+      }
+      return;
+    }
+    if (!config.attemptAlgs || !currentPostZ2) return;
+    const combo = solveWithAlgSet(currentPostZ2, config.attemptAlgs, (p) => predicate(p, currentPostZ2), 5);
     setHint(combo && combo.length ? combo : 'none');
-  }, [config, connected, physicalPattern, attemptPattern]);
+  }, [config, rep, connected, physicalPattern, solveCross, findHint, currentPostZ2, predicate]);
 
   // --- 3D view alg ---
   const { setupAlg, viewAlg } = useMemo(() => {
     if (connected) return { setupAlg: '', viewAlg: visualAlg };
+    const su = rep?.frame === 'raw' ? '' : 'z2';
     if (!rep) return { setupAlg: 'z2', viewAlg: '' };
-    if (stage === 'scramble') return { setupAlg: 'z2', viewAlg: rep.scramblePostZ2.slice(0, stepIdx).join(' ') };
-    return { setupAlg: 'z2', viewAlg: [...rep.scramblePostZ2, ...attemptActions].join(' ') };
+    if (stage === 'scramble') return { setupAlg: su, viewAlg: rep.scrambleView.slice(0, stepIdx).join(' ') };
+    return { setupAlg: su, viewAlg: [...rep.scrambleView, ...attemptActions].join(' ') };
   }, [connected, visualAlg, rep, stage, stepIdx, attemptActions]);
 
   const feedbackKind = trackFeedback?.kind ?? null;
-  const scrambleGuideDone = !connected && rep ? stepIdx >= rep.scrambleRaw.length : false;
+  const scrambleGuideDone = !connected && rep ? stepIdx >= rep.scrambleView.length : false;
   const methodLabel =
     trainingMethod === 'full' ? 'Full' : TWO_LOOK_DRILLS[trainingMethod as TwoLookDrillId]?.label ?? trainingMethod;
 
@@ -410,11 +551,54 @@ export const TrainingView: React.FC = () => {
         )}
 
         {/* IDLE — case selection + start */}
-        {stage === 'idle' && (
+        {stage === 'idle' && config && (
           <div className="bg-[var(--surface)] border border-[var(--border)] rounded-2xl p-4 flex flex-col gap-3">
-            {!phaseIsCaseBased ? (
-              <p className="text-sm text-[var(--text-muted)]">{trainingSubMode} drills are coming in a later pass.</p>
-            ) : config && !config.isTwoLook ? (
+            {config.kind === 'cross' ? (
+              <p className="text-[11px] text-[var(--text-muted)] leading-relaxed">
+                A full random scramble. Plan your cross{connected ? '' : ', step through the scramble'}, then solve just
+                the four white edges — completion is detected automatically.
+              </p>
+            ) : config.kind === 'f2l' ? (
+              <div className="flex flex-col gap-2.5">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-[11px] uppercase tracking-wider text-[var(--text-muted)] font-medium">Slot</span>
+                  <div className="flex gap-1">
+                    {(['random', ...F2L_SLOTS] as const).map((s) => (
+                      <button
+                        key={s}
+                        onClick={() => setTrainingF2lSlot(s)}
+                        className={`px-2 py-1 rounded-md text-[11px] font-medium transition-all cursor-pointer ${
+                          trainingF2lSlot === s
+                            ? 'bg-[var(--surface-2)] text-[var(--text)] ring-1 ring-[var(--border)]'
+                            : 'text-[var(--text-muted)] hover:text-[var(--text)]'
+                        }`}
+                      >
+                        {s === 'random' ? 'Any' : s}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-[11px] uppercase tracking-wider text-[var(--text-muted)] font-medium">Case type</span>
+                  <select
+                    value={trainingCaseFilter ?? ''}
+                    onChange={(e) => setTrainingCaseFilter(e.target.value || null)}
+                    className="text-xs bg-[var(--surface-2)] border border-[var(--border)] rounded-lg px-2 py-1.5 text-[var(--text)] cursor-pointer"
+                  >
+                    <option value="">All case types</option>
+                    {subsets.map((s) => (
+                      <option key={s} value={s}>
+                        {s}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <p className="text-[11px] text-[var(--text-muted)] leading-relaxed">
+                  Attempt-first: no algorithm shown. Solve the pair any way you like — the slot just has to end solved
+                  without disturbing the rest.
+                </p>
+              </div>
+            ) : config.kind === 'full' ? (
               <div className="flex items-center justify-between gap-2">
                 <span className="text-[11px] uppercase tracking-wider text-[var(--text-muted)] font-medium">Case filter</span>
                 <select
@@ -430,7 +614,7 @@ export const TrainingView: React.FC = () => {
                   ))}
                 </select>
               </div>
-            ) : config ? (
+            ) : (
               <div className="flex flex-col gap-2">
                 <div className="flex items-center justify-between">
                   <span className="text-[11px] uppercase tracking-wider text-[var(--text-muted)] font-medium">
@@ -474,26 +658,16 @@ export const TrainingView: React.FC = () => {
                   ))}
                 </div>
               </div>
-            ) : null}
-
-            {phaseIsCaseBased && (
-              <>
-                <button
-                  onClick={startRep}
-                  disabled={isGenerating || !isReady}
-                  className="w-full py-3 rounded-xl font-heading font-semibold text-sm bg-[var(--white)] text-[var(--bg)] hover:opacity-90 disabled:opacity-50 transition-all flex items-center justify-center gap-2 cursor-pointer"
-                >
-                  <RefreshCw className={`w-4 h-4 ${isGenerating ? 'animate-spin' : ''}`} />
-                  <span>{isGenerating ? 'Generating…' : 'Start rep'}</span>
-                </button>
-                <p className="text-[11px] text-[var(--text-muted)] leading-relaxed">
-                  A scramble sets up the case without giving away the solution.
-                  {connected
-                    ? ' Execute it on your cube, then solve — completion is detected automatically.'
-                    : ' Step through it, then solve with the on-screen buttons.'}
-                </p>
-              </>
             )}
+
+            <button
+              onClick={startRep}
+              disabled={isGenerating || !isReady}
+              className="w-full py-3 rounded-xl font-heading font-semibold text-sm bg-[var(--white)] text-[var(--bg)] hover:opacity-90 disabled:opacity-50 transition-all flex items-center justify-center gap-2 cursor-pointer"
+            >
+              <RefreshCw className={`w-4 h-4 ${isGenerating ? 'animate-spin' : ''}`} />
+              <span>{isGenerating ? 'Generating…' : 'Start rep'}</span>
+            </button>
           </div>
         )}
 
@@ -505,7 +679,7 @@ export const TrainingView: React.FC = () => {
                 Set up · {rep.caseName}
               </span>
               <span className="text-[11px] text-[var(--text-muted)]">
-                {connected ? 'physical turns drive this' : `${stepIdx} / ${rep.scrambleRaw.length}`}
+                {connected ? 'physical turns drive this' : `${stepIdx} / ${rep.scrambleView.length}`}
               </span>
             </div>
 
@@ -538,7 +712,7 @@ export const TrainingView: React.FC = () => {
                     ))}
                   </>
                 ) : (
-                  rep.scrambleRaw.map((m, i) => (
+                  rep.scrambleView.map((m, i) => (
                     <button
                       key={i}
                       onClick={() => setStepIdx(i < stepIdx ? i : i + 1)}
@@ -567,7 +741,7 @@ export const TrainingView: React.FC = () => {
                   <ChevronLeft className="w-4 h-4" />
                 </button>
                 <button
-                  onClick={() => setStepIdx((i) => Math.min(rep.scrambleRaw.length, i + 1))}
+                  onClick={() => setStepIdx((i) => Math.min(rep.scrambleView.length, i + 1))}
                   disabled={scrambleGuideDone}
                   className="flex-1 flex items-center justify-center gap-1 px-3 py-2 rounded-xl bg-[var(--surface-2)] text-[var(--text)] hover:bg-[var(--border)] disabled:opacity-30 text-xs font-heading font-semibold transition-colors cursor-pointer"
                 >
@@ -605,15 +779,7 @@ export const TrainingView: React.FC = () => {
                 {config.goalLabel} · recognise &amp; execute
               </span>
               <div className="flex items-center gap-3">
-                {config.attemptAlgs ? (
-                  <button
-                    onClick={showHint}
-                    className="flex items-center gap-1 text-[11px] text-[var(--text-muted)] hover:text-[var(--text)] cursor-pointer"
-                  >
-                    <Lightbulb className="w-3.5 h-3.5" />
-                    <span>Show me</span>
-                  </button>
-                ) : (
+                {config.kind === 'full' ? (
                   <button
                     onClick={() => setShowAlg((s) => !s)}
                     className="flex items-center gap-1 text-[11px] text-[var(--text-muted)] hover:text-[var(--text)] cursor-pointer"
@@ -621,11 +787,21 @@ export const TrainingView: React.FC = () => {
                     {showAlg ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
                     <span>{showAlg ? 'Hide' : 'Show'} algorithm</span>
                   </button>
+                ) : (
+                  <button
+                    onClick={showHint}
+                    className="flex items-center gap-1 text-[11px] text-[var(--text-muted)] hover:text-[var(--text)] cursor-pointer"
+                  >
+                    <Lightbulb className="w-3.5 h-3.5" />
+                    <span>
+                      {config.kind === 'cross' ? 'Show cross' : config.kind === 'f2l' ? 'Show solution' : 'Show me'}
+                    </span>
+                  </button>
                 )}
               </div>
             </div>
 
-            {showAlg && !config.attemptAlgs && (
+            {showAlg && config.kind === 'full' && (
               <div className="bg-[var(--surface-2)] border border-[var(--border)] rounded-lg py-2 px-3">
                 <div className="font-mono text-sm text-center text-[var(--text)]">{rep.algorithm}</div>
                 <div className="text-[10px] text-center text-[var(--text-muted)] mt-1">

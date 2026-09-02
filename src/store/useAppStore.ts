@@ -40,6 +40,8 @@ interface AppStoreState {
   trainingCaseFilter: string | null;
   /** 2-Look drill: allowlist of case names to drill, or `null` for all the drill's cases. */
   trainingCaseAllow: string[] | null;
+  /** F2L drill: which slot to drill, or `'random'` for a random slot each rep. */
+  trainingF2lSlot: 'FR' | 'FL' | 'BR' | 'BL' | 'random';
   trainingStats: TrainingStats;
 
   setMode: (mode: AppMode) => void;
@@ -59,6 +61,7 @@ interface AppStoreState {
   setTrainingMethod: (method: string) => void;
   setTrainingCaseFilter: (subset: string | null) => void;
   setTrainingCaseAllow: (names: string[] | null) => void;
+  setTrainingF2lSlot: (slot: 'FR' | 'FL' | 'BR' | 'BL' | 'random') => void;
   recordTrainingAttempt: (solved: boolean) => void;
   resetTrainingStats: () => void;
   setIsProfileModalOpen: (open: boolean) => void;
@@ -88,6 +91,7 @@ export const useAppStore = create<AppStoreState>((set) => ({
   trainingMethod: 'full',
   trainingCaseFilter: null,
   trainingCaseAllow: null,
+  trainingF2lSlot: 'random',
   trainingStats: { attempts: 0, solved: 0, streak: 0 },
 
   setMode: (activeMode) => set({ activeMode }),
@@ -169,6 +173,7 @@ export const useAppStore = create<AppStoreState>((set) => ({
   setTrainingMethod: (trainingMethod) => set({ trainingMethod, trainingCaseFilter: null, trainingCaseAllow: null }),
   setTrainingCaseFilter: (trainingCaseFilter) => set({ trainingCaseFilter }),
   setTrainingCaseAllow: (trainingCaseAllow) => set({ trainingCaseAllow }),
+  setTrainingF2lSlot: (trainingF2lSlot) => set({ trainingF2lSlot }),
   recordTrainingAttempt: (solved) =>
     set((state) => ({
       trainingStats: {

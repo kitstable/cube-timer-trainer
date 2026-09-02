@@ -120,20 +120,46 @@ describe('Training scramble generator', () => {
     expect(seen.size).toBeGreaterThan(1);
   }, 30_000);
 
-  it('F2L case scramble solves the target slot and preserves the rest (isSlotSolved oracle)', async () => {
+  it('F2L drill: scramble is attempt-ready and its solution passes isSlotSolved + preservesProgress', async () => {
+    const { isSlotSolved, preservesProgress } = await import('../solver/cfopInvariants');
     const f2lCases = matcher.getCases('F2L');
-    // Spot-check one case per slot rather than all 164 (keeps the suite fast).
-    const bySlot = new Map<string, (typeof f2lCases)[number]>();
-    for (const c of f2lCases) if (c.targetSlot && !bySlot.has(c.targetSlot)) bySlot.set(c.targetSlot, c);
-    for (const [slot, c] of bySlot) {
-      const scramble = await generateCaseScramble(solvedPostZ2, c, {
-        randomisePermutation: true,
-        pllPool,
-      });
-      expect(scramble.length).toBeGreaterThan(0);
-      const state = solvedPostZ2.applyAlg(new Alg(scramble.join(' ')));
-      const match = matcher.matchF2L(state, slot);
-      expect(match, `F2L case "${c.name}" (${slot}) scramble ${scramble.join(' ')}`).not.toBeNull();
+    const bySlot = new Map<string, (typeof f2lCases)[number][]>();
+    for (const c of f2lCases) {
+      if (!c.targetSlot) continue;
+      (bySlot.get(c.targetSlot) ?? bySlot.set(c.targetSlot, []).get(c.targetSlot)!).push(c);
+    }
+    for (const [slot, cases] of bySlot) {
+      for (const c of cases.slice(0, 4)) {
+        const scramble = await generateCaseScramble(solvedPostZ2, c, { randomisePermutation: true, pllPool });
+        const start = solvedPostZ2.applyAlg(new Alg(scramble.join(' ')));
+        expect(isSlotSolved(start, slot as any), `${c.name}: slot not yet solved`).toBe(false);
+
+        const solution = matcher.matchF2L(start, slot)!.moves;
+        const solved = start.applyAlg(new Alg(solution.join(' ')));
+        expect(isSlotSolved(solved, slot as any), `${c.name}: slot solved after matchF2L`).toBe(true);
+        expect(preservesProgress(start, solved), `${c.name}: rest of F2L preserved`).toBe(true);
+      }
+    }
+  }, 120_000);
+
+  it('Cross drill: a WCA scramble + its BFS cross solution reads as cross-solved', async () => {
+    const { randomScrambleForEvent } = await import('cubing/scramble');
+    const { solveCrossBFS } = await import('../solver/crossBfs');
+    const { isCrossSolved } = await import('../solver/cfopInvariants');
+    const { relabelMoveZ2 } = await import('../utils/kpuzzleHelper');
+    const kp = await cube3x3x3.kpuzzle();
+
+    for (let i = 0; i < 6; i++) {
+      const wca = (await randomScrambleForEvent('333')).toString();
+      // No-cube cross path: white-up default frame + raw scramble; check on `pattern · z2`.
+      const start = kp.defaultPattern().applyAlg(new Alg(wca));
+      const postZ2 = start.applyAlg(new Alg('z2'));
+      expect(isCrossSolved(postZ2), `scramble ${i}: cross not yet solved`).toBe(false);
+
+      const crossPostZ2 = solveCrossBFS(postZ2, 8);
+      // The drill applies the hint relabelled into the white-up frame.
+      const solved = start.applyAlg(new Alg(crossPostZ2.map(relabelMoveZ2).join(' ')));
+      expect(isCrossSolved(solved.applyAlg(new Alg('z2'))), `scramble ${i}: cross solved`).toBe(true);
     }
   }, 60_000);
 });

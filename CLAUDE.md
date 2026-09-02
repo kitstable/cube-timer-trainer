@@ -225,8 +225,8 @@ Both are on `claude/smart-cube-connection-state-rs2s9a`.
 ## Training mode & 2-Look drills (later session — see `resources/training-mode-spec.md`)
 
 New **Training** tab: isolated, repeatable CFOP-phase drills. Built against
-`resources/training-mode-spec.md`. Phases 1–2 of that spec's build order are done (OLL + PLL);
-F2L / Cross / the Guided Solve rewrite are still pending (spec §6, §8).
+`resources/training-mode-spec.md`. OLL / PLL / F2L / Cross drills are all built; the Guided
+Solve rewrite (spec §8) is still pending.
 
 - **Shared physical-tracking pipeline, generalised.** The Scramble-mode move tracker is now
   mode-neutral so Training reuses it instead of a second copy. `useAppStore` fields renamed
@@ -248,15 +248,20 @@ F2L / Cross / the Guided Solve rewrite are still pending (spec §6, §8).
     values among the 4 positions, so `matchOLL` stops identifying the case. OLL/PLL variety =
     random AUF only (the cubing.js solver is deterministic → 4 variants/case).
     `randomisePermutation` is kept for F2L (LL noise above the slot is harmless there).
-- **Frame handling in `TrainingView.tsx`** (this is the z2-gotcha surface — there are tests):
-  the generator's post-z2 scramble is relabelled to the **raw** smart-cube frame
-  (`relabelMoveZ2`) for `trackTargetMoves` + the connected guide + the no-cube stepping ribbon
-  (matches ScrambleView's white-up convention). The no-cube 3D view + on-screen keypad +
-  `attemptPattern` stay in **post-z2** (yellow-up, `<twisty-player setupAlg="z2">`) so the
-  learner can see the LL case. Completion: connected checks `isOLLSolved(physicalPattern · z2)`;
-  no-cube checks the predicate on `attemptPattern` **directly** (already post-z2 — an earlier
-  spurious extra `· z2` here was the one real bug found, now covered by
-  `trainingScrambleGenerator.test.ts`).
+- **Frame handling in `TrainingView.tsx`** (this is the z2-gotcha surface — there are tests).
+  A rep carries a `frame`: `'postZ2'` (OLL / PLL / 2-Look / F2L — yellow-up, so the learner
+  sees the last layer / F2L slot) or `'raw'` (Cross — white-up, so the cross forms on top).
+  - `trackTargetMoves` + the connected guide + the no-cube stepping ribbon always use the
+    **raw** scramble (`relabelMoveZ2` of the generator output), matching ScrambleView's white-up
+    convention. `scrambleView` is the frame-native scramble for the 3D `alg` + attempt seed.
+  - No-cube attempt state (`attemptPattern`) is seeded from `getPostZ2Pattern()` or
+    `getDefaultPattern()` per frame; the completion predicate always runs on a **post-z2**
+    pattern (`attemptPattern` directly for `'postZ2'`, `· z2` for `'raw'`). Connected always
+    checks `physicalPattern · z2`. An earlier spurious extra `· z2` on the no-cube post-z2 path
+    was the one real bug found — covered by `trainingScrambleGenerator.test.ts`.
+  - F2L completion is `isSlotSolved(p, slot) && preservesProgress(attemptStartPostZ2, p)` —
+    `attemptStartPostZ2Ref` is snapshotted on `enterAttempt`. F2L "Show solution" routes through
+    the guided `findHint('f2l-1', …)` so it's AUF-correct for the live state.
 - **2-Look drill family — `src/solver/twoLook.ts`** (pure). Four drills, each locked to a
   small alg set: `oll-edges` (yellow-cross algs), `oll-corners` (Sune / Anti-Sune),
   `pll-corners` (Aa / Ab), `pll-edges` (Ua / Ub / H / Z). `buildTwoLookDrills(dataset)`
@@ -266,14 +271,20 @@ F2L / Cross / the Guided Solve rewrite are still pending (spec §6, §8).
   hint. Confirmed in data: OLL subset `"Oriented Edges"` === the 7 `twoLookRole: 'corners-only'`
   cases. `useAppStore.trainingMethod` (`'full'` | drill id) + `trainingCaseAllow` (per-case
   chip allowlist). `TrainingRep.method?` persisted.
+- **F2L drill** (attempt-first, spec §6) — slot selector + case-type filter, no algorithm shown
+  by default, face keypad; completion via `isSlotSolved` + `preservesProgress` (the same oracle
+  the F2L fallback search uses), no new validation logic. **Cross drill** — random WCA scramble
+  (`generateScramble()`), `isCrossSolved`, `solveCross` BFS on "Show cross" request; white-up
+  frame (see above).
 - **Persistence** — new Dexie table `trainingReps` via `db.version(2)` (additive, no data
   migration; `src/db/index.ts`). `saveTrainingRep` / `getTrainingRepsByProfile` in
   `repository.ts`, kept out of `getSolvesByProfile`'s per-render full scan. `App.tsx`'s
   profile-name effect now `try/catch`es the cold-DB open race the `version(2)` bump widened.
-- Tests: `src/tests/trainingScrambleGenerator.test.ts` (all 57 OLL / 21 PLL / F2L-per-slot
-  scrambles verified with the production matchers as oracle; both completion framings),
-  `src/tests/twoLook.test.ts` (every corner case solvable by a Sune/Anti-Sune combo; every
-  drill reaches its goal; predicates).
+- Tests: `src/tests/trainingScrambleGenerator.test.ts` (all 57 OLL / 21 PLL scrambles verified
+  with the production matchers as oracle; F2L drill scrambles + `matchF2L` solutions pass
+  `isSlotSolved`/`preservesProgress`; Cross BFS solution in the white-up frame; both completion
+  framings), `src/tests/twoLook.test.ts` (every corner case solvable by a Sune/Anti-Sune combo;
+  every drill reaches its goal; predicates).
 
 ## Where the code stands relative to the spec — open items to discuss
 
