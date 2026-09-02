@@ -18,6 +18,7 @@ import { useIsDesktop } from '../../hooks/useMediaQuery';
 export const TimedSolveView: React.FC = () => {
   const {
     timerState,
+    requireManualStart,
     elapsedMs,
     inspectionRemainingMs,
     lastCompletedSolve,
@@ -322,7 +323,11 @@ export const TimedSolveView: React.FC = () => {
 
           {timerState === 'idle' && (
             <div className="text-xs text-[var(--text-muted)] mt-2 font-mono">
-              {smartCube.isConnected ? 'Cube ready · Turn to start solve' : 'Hold Spacebar or touch screen to start'}
+              {smartCube.isConnected
+                ? (requireManualStart
+                    ? 'Solve stopped · Tap Start or hold Spacebar to begin'
+                    : 'Cube ready · Turn to start solve')
+                : 'Hold Spacebar or touch screen to start'}
             </div>
           )}
         </div>

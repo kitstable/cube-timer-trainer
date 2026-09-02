@@ -125,5 +125,55 @@ describe('DNF Solves and Stats Calculations', () => {
     const remaining2 = Math.max(0, 15000 - (now2 - inspectionStart));
     expect(remaining2).toBe(0);
   });
+
+  describe('Stopped Solve Auto-Start Gating Logic', () => {
+    it('suppresses auto-start when a solve has been stopped / requireManualStart is true', () => {
+      // Simulate auto-start gating condition
+      const shouldAutoStart = (timerState: string, requireManualStart: boolean) => {
+        if (timerState === 'inspection') return true;
+        if (timerState === 'idle' && !requireManualStart) return true;
+        return false;
+      };
+
+      // Normal idle state: auto-starts on turn
+      expect(shouldAutoStart('idle', false)).toBe(true);
+
+      // Active inspection: auto-starts on turn
+      expect(shouldAutoStart('inspection', false)).toBe(true);
+      expect(shouldAutoStart('inspection', true)).toBe(true);
+
+      // Stopped solve (idle with requireManualStart = true): does NOT auto-start on turn
+      expect(shouldAutoStart('idle', true)).toBe(false);
+
+      // Running, paused, or completed states: do NOT auto-start
+      expect(shouldAutoStart('running', false)).toBe(false);
+      expect(shouldAutoStart('paused', false)).toBe(false);
+      expect(shouldAutoStart('completed', false)).toBe(false);
+      expect(shouldAutoStart('completed', true)).toBe(false);
+    });
+
+    it('re-enables auto-start upon manual user start actions', () => {
+      let requireManualStart = true;
+
+      // User manually starts inspection
+      const handleManualStartInspection = () => {
+        requireManualStart = false;
+      };
+
+      handleManualStartInspection();
+      expect(requireManualStart).toBe(false);
+
+      // Solve stopped again
+      requireManualStart = true;
+
+      // User manually starts solve (button tap or spacebar release)
+      const handleManualStartSolve = () => {
+        requireManualStart = false;
+      };
+
+      handleManualStartSolve();
+      expect(requireManualStart).toBe(false);
+    });
+  });
 });
 

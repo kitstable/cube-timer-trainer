@@ -21,6 +21,7 @@ export interface PendingMicroSolve {
 
 export function useTimer() {
   const [timerState, setTimerState] = useState<TimerState>('idle');
+  const [requireManualStart, setRequireManualStart] = useState(false);
   const [elapsedMs, setElapsedMs] = useState(0);
   const [inspectionRemainingMs, setInspectionRemainingMs] = useState(15000);
   const [lastCompletedSolve, setLastCompletedSolve] = useState<Solve | null>(null);
@@ -51,6 +52,7 @@ export function useTimer() {
   const currentPhaseRef = useRef<CFOPPhase>('cross');
 
   const startInspection = useCallback(() => {
+    setRequireManualStart(false);
     setTimerState('inspection');
     setInspectionRemainingMs(15000);
     inspectionStartRef.current = performance.now();
@@ -71,7 +73,10 @@ export function useTimer() {
     // On the smart-cube auto-start path the triggering turn is already in `moveHistory`
     // (and tracking was reset when Timed mode was entered) — clearing here would drop the
     // first move from the count. Manual / no-cube starts still reset.
-    if (!opts?.preserveTracking) resetSolveTracking();
+    if (!opts?.preserveTracking) {
+      resetSolveTracking();
+      setRequireManualStart(false);
+    }
     setElapsedMs(0);
     setTimerState('running');
   }, [resetSolveTracking]);
@@ -108,6 +113,7 @@ export function useTimer() {
     }
 
     const finalSolveTimeMs = elapsedMs;
+    setRequireManualStart(true);
     setTimerState('completed');
 
     const inspectionDuration =
@@ -154,6 +160,7 @@ export function useTimer() {
     }
     endSolveTracking();
     resetSolveTracking();
+    setRequireManualStart(true);
     setTimerState('idle');
     setElapsedMs(0);
     setInspectionRemainingMs(15000);
@@ -243,6 +250,7 @@ export function useTimer() {
       return;
     }
 
+    setRequireManualStart(true);
     setTimerState('completed');
     await commitSolveRecord(finalSolveTimeMs, inspectionDuration, moves, isCubeConnected);
   }, [timerState, elapsedMs, smartCube.isConnected, commitSolveRecord]);
@@ -252,6 +260,7 @@ export function useTimer() {
     const { finalSolveTimeMs, inspectionDuration, moves, isCubeConnected } = pendingSolveDataRef.current;
     setPendingMicroSolve(null);
     pendingSolveDataRef.current = null;
+    setRequireManualStart(true);
     setTimerState('completed');
     await commitSolveRecord(finalSolveTimeMs, inspectionDuration, moves, isCubeConnected);
   }, [commitSolveRecord]);
@@ -317,6 +326,7 @@ export function useTimer() {
     }
     if (timerState !== 'idle') return;
 
+    setRequireManualStart(false);
     lastProcessedMoveTsRef.current = useCubeStore.getState().lastMoveTimestamp || 0;
     inspectionStartRef.current = 0;
     resetSolveTracking();
@@ -357,10 +367,12 @@ export function useTimer() {
     if (lastMoveTimestamp <= lastProcessedMoveTsRef.current) return;
     lastProcessedMoveTsRef.current = lastMoveTimestamp;
 
-    if (timerState === 'idle' || timerState === 'inspection') {
+    if (timerState === 'inspection') {
+      startSolve({ preserveTracking: true });
+    } else if (timerState === 'idle' && !requireManualStart) {
       startSolve({ preserveTracking: true });
     }
-  }, [activeMode, smartCube.isConnected, lastMoveTimestamp, lastMove, timerState, startSolve]);
+  }, [activeMode, smartCube.isConnected, lastMoveTimestamp, lastMove, timerState, requireManualStart, startSolve]);
 
   // Sync current phase during solve
   useEffect(() => {
@@ -455,11 +467,13 @@ export function useTimer() {
     }
 
     if (timerState === 'idle') {
+      setRequireManualStart(false);
       startInspection();
       return;
     }
 
     if (timerState === 'inspection') {
+      setRequireManualStart(false);
       setTimerState('holding');
       holdTimeoutRef.current = setTimeout(() => {
         setTimerState('ready');
@@ -486,6 +500,7 @@ export function useTimer() {
 
   return {
     timerState,
+    requireManualStart,
     elapsedMs,
     inspectionRemainingMs,
     lastCompletedSolve,
