@@ -1,5 +1,6 @@
 import { db } from './index';
 import { getEffectiveTimeMs, type Profile, type Solve } from '../types/db';
+import { filterSolvesForImport, type ParsedImportSolve } from '../utils/historyExportImport';
 
 export async function getAllProfiles(): Promise<Profile[]> {
   return await db.profiles.orderBy('createdAt').toArray();
@@ -48,6 +49,36 @@ export async function deleteSolve(id: string): Promise<void> {
 
 export async function clearSolvesByProfile(profileId: string): Promise<void> {
   await db.solves.where('profileId').equals(profileId).delete();
+}
+
+export interface ImportSolvesOptions {
+  skipDuplicates?: boolean;
+}
+
+export async function importSolves(
+  profileId: string,
+  solvesToImport: ParsedImportSolve[],
+  options: ImportSolvesOptions = { skipDuplicates: true }
+): Promise<{ importedCount: number; skippedCount: number }> {
+  if (solvesToImport.length === 0) {
+    return { importedCount: 0, skippedCount: 0 };
+  }
+
+  const existingSolves = await db.solves.where('profileId').equals(profileId).toArray();
+  const { solvesToAdd, skippedCount } = filterSolvesForImport(existingSolves, solvesToImport, options);
+
+  if (solvesToAdd.length > 0) {
+    const fullSolves: Solve[] = solvesToAdd.map((s) => ({
+      ...s,
+      profileId,
+    }));
+    await db.solves.bulkAdd(fullSolves);
+  }
+
+  return {
+    importedCount: solvesToAdd.length,
+    skippedCount,
+  };
 }
 
 export async function getProfileStats(profileId: string): Promise<{ solveCount: number; bestTime: number | null }> {
