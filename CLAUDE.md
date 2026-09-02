@@ -298,11 +298,15 @@ live cube).
   each new physical turn (read from `moveHistory` deltas) is fed — relabelled to the raw frame
   via `relabelMoveZ2` — into the pure `classifyScrambleMove` tracker (`planRemaining` /
   `planDone`, same tracker the Scramble guide uses, so half-turns / commuting moves / doubles
-  are handled). A `complete` or `error` classification (finished the step, or an unexpected
-  turn) triggers `fetchHintForCurrentPhase()` — a fresh hint from the real state. So it's
-  self-correcting without "undo the mistake" logic, but it does **not** churn a brand-new alg
-  on every single turn (an earlier version did — recomputing the optimal cross on each face
-  turn felt like it wasn't guiding at all).
+  are handled). A **wrong or half turn keeps the current hint** — flashes the red/amber cue
+  (`feedback` state, auto-fades after 2.5s, same as `ScrambleView`'s `trackFeedback`) and
+  `classifyScrambleMove` prepends correction move(s) to `planRemaining` so the guide leads you
+  back on track. Only **`complete`** (you finished the step) triggers
+  `fetchHintForCurrentPhase()` — a fresh hint from the real state. So it's self-correcting,
+  matches the Scramble guide's wrong-turn theme, and does **not** churn a brand-new alg on
+  every turn (two earlier versions did — recomputing the optimal cross on each face turn felt
+  like it wasn't guiding, then recomputing on any *wrong* turn skipped to a different alg
+  instead of correcting; the user caught both on real hardware).
   - `recomputingRef` guards the move-consuming effect while a fetch is in flight;
     `consumedMovesRef` marks how far into `moveHistory` has been read.
   - Phase / solved-slots for the UI come from `evaluateCFOPFromPattern(hintPattern)` inside
@@ -326,11 +330,13 @@ live cube).
   removed; `findHint.ts`'s dead `tier === 'confident'` branches removed; unused
   `src/components/ui/MoveRibbon.tsx` deleted.
 - Tests: `src/tests/guidedConvergence.test.ts` still green (3 tiers × 2 notations × 12
-  scrambles), plus a "connected-cube path" case (drives the `physicalPattern · z2` → `findHint`
-  → relabel-back loop to convergence) and a "connected walkthrough" case (executing each
-  phase's hint verbatim never reads as a wrong turn, each plan reports `complete` on its last
-  move, and it reaches solved). Connected Guided *was* verified against real hardware by the
-  user — the "recomputes on every turn instead of guiding" fix above came from that testing.
+  scrambles), plus: a "connected-cube path" case (drives the `physicalPattern · z2` →
+  `findHint` → relabel-back loop to convergence); a "connected walkthrough" case (executing
+  each phase's hint verbatim never reads as a wrong turn, each plan `complete`s, reaches
+  solved); and a "wrong turn yields a correction" case (a wrong turn → `error` +
+  `nextRemaining[0]` is the undo; doing the correction → `progress` back on the same plan).
+  Connected Guided *was* verified against real hardware by the user — both the "recomputes on
+  every turn" and "wrong turn skips to a new alg" fixes came from that testing.
 
 ## Where the code stands relative to the spec — open items to discuss
 

@@ -212,6 +212,38 @@ describe('Guided solve converges for every scramble / tier / notation', () => {
     }
   }, 60_000);
 
+  it('connected: a wrong turn yields a correction (not a fresh alg), then recovers', async () => {
+    // Guided feeds turns into `classifyScrambleMove` against the current hint. A wrong turn
+    // must classify `error` with correction moves (so the guide leads you back), and doing
+    // the correction must return to `progress` on the same hint — never `complete`/recompute.
+    const { relabelMoveZ2 } = await import('../utils/kpuzzleHelper');
+    const { invertMove } = await import('../utils/moveSimplifier');
+    const { classifyScrambleMove } = await import('../utils/scrambleTracker');
+    const p = kpuzzle.defaultPattern().applyAlg(new Alg("R U R' U' F' L2 D B2 U2 F' R2 D' L2 U2 B2 D F2 D' L2"));
+    const status = evaluateCFOPFromPattern(p.applyAlg(new Alg('z2')));
+    const hint = await findHint(
+      matcher,
+      p.applyAlg(new Alg('z2')),
+      { phase: status.currentPhase, activeSlot: 'FR', techniqueTier: '2look', notationMode: 'simplified' },
+      false
+    );
+    const plan = hint.moves.map(relabelMoveZ2);
+    expect(plan.length).toBeGreaterThan(1);
+
+    // A wrong first turn: a quarter-turn of a face different from the plan's first move.
+    const wrong = ['U', 'D', 'L', 'R', 'F', 'B'].find((f) => f !== plan[0][0])!;
+    const c1 = classifyScrambleMove(plan, [], wrong, false);
+    expect(c1.kind).toBe('error');
+    expect(c1.corrections.length).toBeGreaterThan(0);
+    expect(c1.nextRemaining[0]).toBe(invertMove(wrong)); // guide now leads with the undo
+
+    // Doing the correction returns to the plan.
+    const c2 = classifyScrambleMove(plan, c1.nextDone, invertMove(wrong), c1.correctionActive);
+    expect(c2.kind).toBe('progress');
+    expect(c2.nextRemaining).toEqual(plan);
+    expect(c2.correctionActive).toBe(false);
+  }, 30_000);
+
   it('the guaranteed fallback alone (no matchers) still solves every scramble', async () => {
     const rand = mulberry32(0x5A17);
     for (let i = 0; i < 8; i++) {
