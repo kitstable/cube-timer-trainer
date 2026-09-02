@@ -53,6 +53,19 @@ function getSharedWorker(): Worker {
           cb.resolve(res.alg);
           pendingRequests.delete('RECONSTRUCT');
         }
+      } else if (res.type === 'TRAINING_SCRAMBLE_GENERATED') {
+        const cb = pendingRequests.get('TRAINING_SCRAMBLE');
+        if (cb) {
+          cb.resolve({
+            moves: res.moves,
+            caseName: res.caseName,
+            subset: res.subset,
+            algorithm: res.algorithm,
+            algorithmSimplified: res.algorithmSimplified,
+            targetSlot: res.targetSlot,
+          });
+          pendingRequests.delete('TRAINING_SCRAMBLE');
+        }
       } else if (res.type === 'ERROR') {
         console.error('Solver worker error:', res.message);
         for (const [key, cb] of pendingRequests.entries()) {
@@ -138,6 +151,31 @@ export function useSolverWorker() {
 
 
 
+  const generateTrainingScramble = useCallback(
+    (
+      caseSource: 'OLL' | 'PLL' | 'F2L' | 'OLL_2LOOK_EDGE',
+      caseNames: string[]
+    ): Promise<{
+      moves: string[];
+      caseName: string;
+      subset: string;
+      algorithm: string;
+      algorithmSimplified: string;
+      targetSlot?: string;
+    }> => {
+      return new Promise((resolve, reject) => {
+        const worker = getSharedWorker();
+        pendingRequests.set('TRAINING_SCRAMBLE', { resolve, reject });
+        worker.postMessage({
+          type: 'GENERATE_TRAINING_SCRAMBLE',
+          caseSource,
+          caseNames,
+        } satisfies SolverWorkerRequest);
+      });
+    },
+    []
+  );
+
   const reconstructAlg = useCallback((patternData: any): Promise<string> => {
     return new Promise((resolve, reject) => {
       const worker = getSharedWorker();
@@ -152,6 +190,7 @@ export function useSolverWorker() {
     solveCross,
     findHint,
     reconstructAlg,
+    generateTrainingScramble,
   };
 }
 

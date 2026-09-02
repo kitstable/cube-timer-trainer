@@ -1,5 +1,5 @@
 import { db } from './index';
-import { getEffectiveTimeMs, type Profile, type Solve } from '../types/db';
+import { getEffectiveTimeMs, type Profile, type Solve, type TrainingRep } from '../types/db';
 import { filterSolvesForImport, type ParsedImportSolve } from '../utils/historyExportImport';
 
 export async function getAllProfiles(): Promise<Profile[]> {
@@ -22,7 +22,22 @@ export async function updateProfile(id: string, name: string): Promise<void> {
 
 export async function deleteProfile(id: string): Promise<void> {
   await db.solves.where('profileId').equals(id).delete();
+  await db.trainingReps.where('profileId').equals(id).delete();
   await db.profiles.delete(id);
+}
+
+export async function saveTrainingRep(rep: Omit<TrainingRep, 'id' | 'createdAt'>): Promise<TrainingRep> {
+  const record: TrainingRep = {
+    ...rep,
+    id: `trep-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+    createdAt: Date.now(),
+  };
+  await db.trainingReps.add(record);
+  return record;
+}
+
+export async function getTrainingRepsByProfile(profileId: string): Promise<TrainingRep[]> {
+  return await db.trainingReps.where('profileId').equals(profileId).reverse().sortBy('createdAt');
 }
 
 export async function saveSolve(solve: Omit<Solve, 'id' | 'createdAt'>): Promise<Solve> {

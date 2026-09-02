@@ -13,9 +13,9 @@ export const ScrambleView: React.FC = () => {
     currentScramble,
     scrambleMoves,
     scrambleProgressIndex,
-    scrambleRemainingMoves,
-    scrambleDoneMoves,
-    scrambleFeedback,
+    trackRemainingMoves,
+    trackDoneMoves,
+    trackFeedback,
     setScramble,
     setMode,
     setScrambleProgressIndex,
@@ -23,8 +23,8 @@ export const ScrambleView: React.FC = () => {
     stepBackScrambleProgress,
     resetScrambleProgress,
     completeScrambleProgress,
-    clearScrambleFeedback,
-    resetPhysicalScramble,
+    clearTrackFeedback,
+    resetPhysicalTrack,
   } = useAppStore();
 
   const { smartCube, visualAlg, physicalPattern, setScramble: setCubeStoreScramble } = useCubeStore();
@@ -75,7 +75,7 @@ export const ScrambleView: React.FC = () => {
   }, [isAutoAdvancing, scrambleProgressIndex, scrambleMoves.length, smartCube.isConnected]);
 
   // With a smart cube connected, every physical turn is tracked (utils/scrambleTracker.ts):
-  // guidance runs off `scrambleRemainingMoves`, not the manual progress index.
+  // guidance runs off `trackRemainingMoves`, not the manual progress index.
   const connected = smartCube.isConnected;
   const physicalVisual = connected && visualAlg.length > 0;
   // The guided scramble only makes sense starting from a solved cube. If the connected
@@ -83,23 +83,23 @@ export const ScrambleView: React.FC = () => {
   // switched here), hold in "return to solved" until it is — physical turns are ignored
   // by the tracker until then (see useSmartCube.ts).
   const isPhysicalSolved = physicalPattern ? isPatternSolved(physicalPattern) : true;
-  const awaitingSolved = connected && !isPhysicalSolved && scrambleDoneMoves.length === 0;
-  const feedbackKind = scrambleFeedback?.kind ?? null;
-  const correctionCount = scrambleFeedback?.corrections.length ?? 0;
+  const awaitingSolved = connected && !isPhysicalSolved && trackDoneMoves.length === 0;
+  const feedbackKind = trackFeedback?.kind ?? null;
+  const correctionCount = trackFeedback?.corrections.length ?? 0;
 
   const isComplete = connected
-    ? scrambleMoves.length > 0 && scrambleRemainingMoves.length === 0
+    ? scrambleMoves.length > 0 && trackRemainingMoves.length === 0
     : scrambleMoves.length > 0 && scrambleProgressIndex >= scrambleMoves.length;
 
   const currentExpectedMove = connected
-    ? scrambleRemainingMoves[0] ?? null
+    ? trackRemainingMoves[0] ?? null
     : !isComplete && scrambleMoves.length > 0
     ? scrambleMoves[scrambleProgressIndex]
     : null;
 
-  const doneCount = connected ? scrambleDoneMoves.length : scrambleProgressIndex;
+  const doneCount = connected ? trackDoneMoves.length : scrambleProgressIndex;
   const totalCount = connected
-    ? scrambleDoneMoves.length + scrambleRemainingMoves.length
+    ? trackDoneMoves.length + trackRemainingMoves.length
     : scrambleMoves.length;
 
   // The 3D cube visualizer: mirror the real physical cube when connected, otherwise show
@@ -110,10 +110,10 @@ export const ScrambleView: React.FC = () => {
 
   // Auto-fade the wrong/half-done cue if the user pauses.
   useEffect(() => {
-    if (!scrambleFeedback) return;
-    const t = setTimeout(() => clearScrambleFeedback(), 2500);
+    if (!trackFeedback) return;
+    const t = setTimeout(() => clearTrackFeedback(), 2500);
     return () => clearTimeout(t);
-  }, [scrambleFeedback?.at, clearScrambleFeedback]);
+  }, [trackFeedback?.at, clearTrackFeedback]);
 
   const handleToggleAutoAdvance = () => {
     if (isComplete) {
@@ -260,11 +260,11 @@ export const ScrambleView: React.FC = () => {
               <div className="min-w-0 flex-1">
                 {feedbackKind === 'error' ? (
                   <div className="text-xs font-semibold text-[var(--red)]">
-                    Wrong turn — do {scrambleFeedback?.corrections.join(' ')} to get back on track
+                    Wrong turn — do {trackFeedback?.corrections.join(' ')} to get back on track
                   </div>
                 ) : feedbackKind === 'partial' ? (
                   <div className="text-xs font-semibold text-[var(--orange)]">
-                    Half done — keep turning this face to {scrambleFeedback?.corrections.join(' ')}
+                    Half done — keep turning this face to {trackFeedback?.corrections.join(' ')}
                   </div>
                 ) : (
                   <div className="text-xs lg:text-sm font-semibold text-[var(--text)] truncate">
@@ -286,8 +286,8 @@ export const ScrambleView: React.FC = () => {
                 <span>Smart cube · every turn tracked</span>
               </div>
               <button
-                onClick={() => resetPhysicalScramble()}
-                disabled={scrambleDoneMoves.length === 0}
+                onClick={() => resetPhysicalTrack()}
+                disabled={trackDoneMoves.length === 0}
                 title="Restart scramble tracking (cube must be solved)"
                 className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-heading font-medium bg-[var(--surface-2)] text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--border)] disabled:opacity-30 disabled:cursor-not-allowed transition-colors cursor-pointer"
               >
@@ -387,7 +387,7 @@ export const ScrambleView: React.FC = () => {
           <div className="font-mono text-sm font-medium leading-relaxed tracking-wide flex flex-wrap gap-1.5 justify-center py-1">
             {connected ? (
               <>
-                {scrambleDoneMoves.map((m, idx) => (
+                {trackDoneMoves.map((m, idx) => (
                   <span
                     key={`done-${idx}`}
                     className="px-2 py-1 rounded-md text-xs font-mono text-[var(--text-muted)] opacity-40 line-through"
@@ -395,7 +395,7 @@ export const ScrambleView: React.FC = () => {
                     {m}
                   </span>
                 ))}
-                {scrambleRemainingMoves.map((m, idx) => {
+                {trackRemainingMoves.map((m, idx) => {
                   const isCorrection = feedbackKind !== null && idx < correctionCount;
                   const isNext = idx === 0 && !isCorrection;
                   return (

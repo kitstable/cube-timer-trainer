@@ -5,69 +5,81 @@ const S = ["L'", 'D', 'F2'];
 
 function reset() {
   useAppStore.setState({
+    currentScramble: '',
     scrambleMoves: [],
     scrambleProgressIndex: 0,
-    scrambleRemainingMoves: [],
-    scrambleDoneMoves: [],
-    scrambleFeedback: null,
-    scrambleCorrectionActive: false,
+    trackTargetMoves: [],
+    trackRemainingMoves: [],
+    trackDoneMoves: [],
+    trackFeedback: null,
+    trackCorrectionActive: false,
   });
 }
 
-describe('useAppStore — physical scramble tracking', () => {
+describe('useAppStore — physical move-sequence tracking', () => {
   beforeEach(reset);
 
   it('setScramble seeds the tracker fields', () => {
     useAppStore.getState().setScramble("L' D F2", S);
     const s = useAppStore.getState();
-    expect(s.scrambleRemainingMoves).toEqual(S);
-    expect(s.scrambleDoneMoves).toEqual([]);
-    expect(s.scrambleFeedback).toBeNull();
-    expect(s.scrambleCorrectionActive).toBe(false);
+    expect(s.trackTargetMoves).toEqual(S);
+    expect(s.trackRemainingMoves).toEqual(S);
+    expect(s.trackDoneMoves).toEqual([]);
+    expect(s.trackFeedback).toBeNull();
+    expect(s.trackCorrectionActive).toBe(false);
+  });
+
+  it('setTrackTarget seeds the tracker without touching the Scramble-tab scramble', () => {
+    useAppStore.getState().setTrackTarget(S);
+    const s = useAppStore.getState();
+    expect(s.trackTargetMoves).toEqual(S);
+    expect(s.trackRemainingMoves).toEqual(S);
+    expect(s.currentScramble).toBe('');
+    expect(s.scrambleMoves).toEqual([]);
   });
 
   it('a correct run advances remaining and never raises feedback', () => {
     useAppStore.getState().setScramble("L' D F2", S);
-    for (const m of S) useAppStore.getState().applyPhysicalScrambleMove(m);
+    for (const m of S) useAppStore.getState().applyPhysicalTrackMove(m);
     const s = useAppStore.getState();
-    expect(s.scrambleRemainingMoves).toEqual([]);
-    expect(s.scrambleFeedback).toBeNull();
-    expect(s.scrambleDoneMoves).toEqual(S);
+    expect(s.trackRemainingMoves).toEqual([]);
+    expect(s.trackFeedback).toBeNull();
+    expect(s.trackDoneMoves).toEqual(S);
   });
 
   it('a wrong turn raises error feedback, which clears on the correcting turn', () => {
     useAppStore.getState().setScramble("L' D F2", S);
-    useAppStore.getState().applyPhysicalScrambleMove('R');
+    useAppStore.getState().applyPhysicalTrackMove('R');
     let s = useAppStore.getState();
-    expect(s.scrambleFeedback?.kind).toBe('error');
-    expect(s.scrambleFeedback?.corrections).toEqual(["R'"]);
-    expect(s.scrambleRemainingMoves).toEqual(["R'", "L'", 'D', 'F2']);
+    expect(s.trackFeedback?.kind).toBe('error');
+    expect(s.trackFeedback?.corrections).toEqual(["R'"]);
+    expect(s.trackRemainingMoves).toEqual(["R'", "L'", 'D', 'F2']);
 
-    useAppStore.getState().applyPhysicalScrambleMove("R'");
+    useAppStore.getState().applyPhysicalTrackMove("R'");
     s = useAppStore.getState();
-    expect(s.scrambleFeedback).toBeNull();
-    expect(s.scrambleCorrectionActive).toBe(false);
-    expect(s.scrambleRemainingMoves).toEqual(S);
+    expect(s.trackFeedback).toBeNull();
+    expect(s.trackCorrectionActive).toBe(false);
+    expect(s.trackRemainingMoves).toEqual(S);
   });
 
   it('a rotation is ignored and leaves state untouched', () => {
     useAppStore.getState().setScramble("L' D F2", S);
-    useAppStore.getState().applyPhysicalScrambleMove('y');
+    useAppStore.getState().applyPhysicalTrackMove('y');
     const s = useAppStore.getState();
-    expect(s.scrambleDoneMoves).toEqual([]);
-    expect(s.scrambleRemainingMoves).toEqual(S);
+    expect(s.trackDoneMoves).toEqual([]);
+    expect(s.trackRemainingMoves).toEqual(S);
   });
 
-  it('clearScrambleFeedback and resetPhysicalScramble reset tracking', () => {
+  it('clearTrackFeedback and resetPhysicalTrack reset tracking', () => {
     useAppStore.getState().setScramble("L' D F2", S);
-    useAppStore.getState().applyPhysicalScrambleMove('R');
-    useAppStore.getState().clearScrambleFeedback();
-    expect(useAppStore.getState().scrambleFeedback).toBeNull();
+    useAppStore.getState().applyPhysicalTrackMove('R');
+    useAppStore.getState().clearTrackFeedback();
+    expect(useAppStore.getState().trackFeedback).toBeNull();
 
-    useAppStore.getState().resetPhysicalScramble();
+    useAppStore.getState().resetPhysicalTrack();
     const s = useAppStore.getState();
-    expect(s.scrambleRemainingMoves).toEqual(S);
-    expect(s.scrambleDoneMoves).toEqual([]);
-    expect(s.scrambleCorrectionActive).toBe(false);
+    expect(s.trackRemainingMoves).toEqual(S);
+    expect(s.trackDoneMoves).toEqual([]);
+    expect(s.trackCorrectionActive).toBe(false);
   });
 });

@@ -1,6 +1,14 @@
 import { create } from 'zustand';
 import type { AppMode, TechniqueTier, NotationMode, ScrambleFeedback } from '../types/cube';
+import type { TrainingPhase } from '../types/db';
 import { classifyScrambleMove } from '../utils/scrambleTracker';
+
+/** Session-scoped Training tally (not persisted — only completed reps go to Dexie). */
+export interface TrainingStats {
+  attempts: number;
+  solved: number;
+  streak: number;
+}
 
 interface AppStoreState {
   activeMode: AppMode;
@@ -8,16 +16,31 @@ interface AppStoreState {
   currentScramble: string;
   scrambleMoves: string[];
   scrambleProgressIndex: number;
-  /** Live guided-scramble tracking (smart cube connected) — independent of the index path. */
-  scrambleRemainingMoves: string[];
-  scrambleDoneMoves: string[];
-  scrambleFeedback: ScrambleFeedback | null;
-  scrambleCorrectionActive: boolean;
+  /**
+   * Live physical move-sequence tracking (smart cube connected) — independent of the
+   * manual `scrambleProgressIndex` path. Mode-neutral: Scramble mode feeds it the WCA
+   * scramble, Training mode feeds it a case-targeted scramble. See utils/scrambleTracker.ts.
+   */
+  trackTargetMoves: string[];
+  trackRemainingMoves: string[];
+  trackDoneMoves: string[];
+  trackFeedback: ScrambleFeedback | null;
+  trackCorrectionActive: boolean;
   isProfileModalOpen: boolean;
   techniqueTier: TechniqueTier;
   notationMode: NotationMode;
   guidanceTier: TechniqueTier;
   guidanceMethod: TechniqueTier;
+
+  /** Training mode: which CFOP phase is being drilled. */
+  trainingSubMode: TrainingPhase;
+  /** Training mode: `'full'` (whole case set) or a 2-Look drill id (`'oll-corners'` …). */
+  trainingMethod: string;
+  /** Full OLL/PLL: restrict to one case `subset`, or `null` for the whole set. */
+  trainingCaseFilter: string | null;
+  /** 2-Look drill: allowlist of case names to drill, or `null` for all the drill's cases. */
+  trainingCaseAllow: string[] | null;
+  trainingStats: TrainingStats;
 
   setMode: (mode: AppMode) => void;
   setProfileId: (id: string) => void;
@@ -27,9 +50,17 @@ interface AppStoreState {
   stepBackScrambleProgress: () => void;
   resetScrambleProgress: () => void;
   completeScrambleProgress: () => void;
-  applyPhysicalScrambleMove: (move: string) => void;
-  clearScrambleFeedback: () => void;
-  resetPhysicalScramble: () => void;
+  /** Point the physical tracker at a move sequence (without touching the Scramble-tab scramble). */
+  setTrackTarget: (moves: string[]) => void;
+  applyPhysicalTrackMove: (move: string) => void;
+  clearTrackFeedback: () => void;
+  resetPhysicalTrack: () => void;
+  setTrainingSubMode: (phase: TrainingPhase) => void;
+  setTrainingMethod: (method: string) => void;
+  setTrainingCaseFilter: (subset: string | null) => void;
+  setTrainingCaseAllow: (names: string[] | null) => void;
+  recordTrainingAttempt: (solved: boolean) => void;
+  resetTrainingStats: () => void;
   setIsProfileModalOpen: (open: boolean) => void;
   setTechniqueTier: (tier: TechniqueTier) => void;
   setNotationMode: (mode: NotationMode) => void;
@@ -43,15 +74,21 @@ export const useAppStore = create<AppStoreState>((set) => ({
   currentScramble: '',
   scrambleMoves: [],
   scrambleProgressIndex: 0,
-  scrambleRemainingMoves: [],
-  scrambleDoneMoves: [],
-  scrambleFeedback: null,
-  scrambleCorrectionActive: false,
+  trackTargetMoves: [],
+  trackRemainingMoves: [],
+  trackDoneMoves: [],
+  trackFeedback: null,
+  trackCorrectionActive: false,
   isProfileModalOpen: false,
   techniqueTier: '2look',
   notationMode: 'simplified',
   guidanceTier: '2look',
   guidanceMethod: '2look',
+  trainingSubMode: 'OLL',
+  trainingMethod: 'full',
+  trainingCaseFilter: null,
+  trainingCaseAllow: null,
+  trainingStats: { attempts: 0, solved: 0, streak: 0 },
 
   setMode: (activeMode) => set({ activeMode }),
   setProfileId: (currentProfileId) => set({ currentProfileId }),
@@ -60,10 +97,11 @@ export const useAppStore = create<AppStoreState>((set) => ({
       currentScramble,
       scrambleMoves,
       scrambleProgressIndex: 0,
-      scrambleRemainingMoves: scrambleMoves,
-      scrambleDoneMoves: [],
-      scrambleFeedback: null,
-      scrambleCorrectionActive: false,
+      trackTargetMoves: scrambleMoves,
+      trackRemainingMoves: scrambleMoves,
+      trackDoneMoves: [],
+      trackFeedback: null,
+      trackCorrectionActive: false,
     }),
   setScrambleProgressIndex: (scrambleProgressIndex) => set({ scrambleProgressIndex }),
   advanceScrambleProgress: () =>
@@ -77,22 +115,30 @@ export const useAppStore = create<AppStoreState>((set) => ({
   resetScrambleProgress: () =>
     set((state) => ({
       scrambleProgressIndex: 0,
-      scrambleRemainingMoves: state.scrambleMoves,
-      scrambleDoneMoves: [],
-      scrambleFeedback: null,
-      scrambleCorrectionActive: false,
+      trackRemainingMoves: state.trackTargetMoves,
+      trackDoneMoves: [],
+      trackFeedback: null,
+      trackCorrectionActive: false,
     })),
   completeScrambleProgress: () =>
     set((state) => ({
       scrambleProgressIndex: state.scrambleMoves.length,
     })),
-  applyPhysicalScrambleMove: (move) =>
+  setTrackTarget: (moves) =>
+    set({
+      trackTargetMoves: moves,
+      trackRemainingMoves: moves,
+      trackDoneMoves: [],
+      trackFeedback: null,
+      trackCorrectionActive: false,
+    }),
+  applyPhysicalTrackMove: (move) =>
     set((state) => {
       const res = classifyScrambleMove(
-        state.scrambleMoves,
-        state.scrambleDoneMoves,
+        state.trackTargetMoves,
+        state.trackDoneMoves,
         move,
-        state.scrambleCorrectionActive,
+        state.trackCorrectionActive,
       );
       if (res.kind === 'ignored') return {};
 
@@ -104,27 +150,37 @@ export const useAppStore = create<AppStoreState>((set) => ({
           : null;
 
       return {
-        scrambleDoneMoves: res.nextDone,
-        scrambleRemainingMoves: res.nextRemaining,
-        scrambleCorrectionActive: res.correctionActive,
-        scrambleFeedback: feedback,
+        trackDoneMoves: res.nextDone,
+        trackRemainingMoves: res.nextRemaining,
+        trackCorrectionActive: res.correctionActive,
+        trackFeedback: feedback,
       };
     }),
-  clearScrambleFeedback: () => set({ scrambleFeedback: null }),
-  resetPhysicalScramble: () =>
+  clearTrackFeedback: () => set({ trackFeedback: null }),
+  resetPhysicalTrack: () =>
     set((state) => ({
-      scrambleRemainingMoves: state.scrambleMoves,
-      scrambleDoneMoves: [],
-      scrambleFeedback: null,
-      scrambleCorrectionActive: false,
+      trackRemainingMoves: state.trackTargetMoves,
+      trackDoneMoves: [],
+      trackFeedback: null,
+      trackCorrectionActive: false,
     })),
+  setTrainingSubMode: (trainingSubMode) =>
+    set({ trainingSubMode, trainingMethod: 'full', trainingCaseFilter: null, trainingCaseAllow: null }),
+  setTrainingMethod: (trainingMethod) => set({ trainingMethod, trainingCaseFilter: null, trainingCaseAllow: null }),
+  setTrainingCaseFilter: (trainingCaseFilter) => set({ trainingCaseFilter }),
+  setTrainingCaseAllow: (trainingCaseAllow) => set({ trainingCaseAllow }),
+  recordTrainingAttempt: (solved) =>
+    set((state) => ({
+      trainingStats: {
+        attempts: state.trainingStats.attempts + 1,
+        solved: state.trainingStats.solved + (solved ? 1 : 0),
+        streak: solved ? state.trainingStats.streak + 1 : 0,
+      },
+    })),
+  resetTrainingStats: () => set({ trainingStats: { attempts: 0, solved: 0, streak: 0 } }),
   setIsProfileModalOpen: (isProfileModalOpen) => set({ isProfileModalOpen }),
   setTechniqueTier: (techniqueTier) => set({ techniqueTier, guidanceTier: techniqueTier, guidanceMethod: techniqueTier }),
   setNotationMode: (notationMode) => set({ notationMode }),
   setGuidanceTier: (guidanceTier) => set({ techniqueTier: guidanceTier, guidanceTier, guidanceMethod: guidanceTier }),
   setGuidanceMethod: (guidanceMethod) => set({ techniqueTier: guidanceMethod, guidanceTier: guidanceMethod, guidanceMethod }),
 }));
-
-
-
-

@@ -26,21 +26,24 @@ export async function readActiveSmartCubePattern(): Promise<any | null> {
   }
 }
 
+/** Modes whose views drive the physical move-sequence tracker (Scramble guide, Training drills). */
+const TRACKING_MODES: AppMode[] = ['scramble', 'training'];
+
 /**
  * Defers a same-face "partial" turn briefly so a fluid double turn (`R2` arriving as two
  * `R` events) doesn't flash the correction UI between its halves. Sits between the BLE
- * event and the guided-scramble tracker; `applyMove` to `useCubeStore` stays immediate.
+ * event and the move-sequence tracker; `applyMove` to `useCubeStore` stays immediate.
  */
 const scramblePartialGate = createScramblePartialGate({
   classify: (move) => {
     const s = useAppStore.getState();
-    return classifyScrambleMove(s.scrambleMoves, s.scrambleDoneMoves, move, s.scrambleCorrectionActive).kind;
+    return classifyScrambleMove(s.trackTargetMoves, s.trackDoneMoves, move, s.trackCorrectionActive).kind;
   },
   commit: (move) => {
-    // The tab may have changed during the grace window — only the scramble guide consumes this.
+    // The tab may have changed during the grace window — only tracking-mode views consume this.
     const s = useAppStore.getState();
-    if (s.activeMode === 'scramble' && s.scrambleMoves.length > 0) {
-      s.applyPhysicalScrambleMove(move);
+    if (TRACKING_MODES.includes(s.activeMode) && s.trackTargetMoves.length > 0) {
+      s.applyPhysicalTrackMove(move);
     }
   },
   graceMs: SCRAMBLE_PARTIAL_GRACE_MS,
@@ -158,24 +161,25 @@ export function useSmartCube() {
           ? leafEvent.timeStamp
           : Date.now();
 
-        // Snapshot whether the physical cube was solved *before* this turn — the guided
-        // scramble is only meaningful when it starts from a solved cube.
+        // Snapshot whether the physical cube was solved *before* this turn — the tracked
+        // sequence is only meaningful when it starts from a solved cube.
         const physicalBefore = useCubeStore.getState().physicalPattern;
         const wasSolvedBeforeMove = physicalBefore ? isPatternSolved(physicalBefore) : true;
 
         // Dispatch move directly to store — every physical turn updates ground truth.
         applyMove(moveStr, timestamp);
 
-        // In Scramble mode, feed every turn to the guided-scramble tracker: it advances
-        // on the expected move, absorbs same-face partials, and prepends correction
-        // moves for wrong turns (see utils/scrambleTracker.ts). But don't start tracking
-        // until the cube is actually solved — otherwise turning a still-scrambled cube
-        // (e.g. after connecting scrambled and routing through Timed) processes junk moves.
-        const { activeMode, scrambleMoves, scrambleDoneMoves } = useAppStore.getState();
+        // In a tracking mode (Scramble guide / Training drill), feed every turn to the
+        // move-sequence tracker: it advances on the expected move, absorbs same-face
+        // partials, and prepends correction moves for wrong turns (see
+        // utils/scrambleTracker.ts). But don't start tracking until the cube is actually
+        // solved — otherwise turning a still-scrambled cube (e.g. after connecting
+        // scrambled and routing through Timed) processes junk moves.
+        const { activeMode, trackTargetMoves, trackDoneMoves } = useAppStore.getState();
         // `hasHeld()` — a partial from move #1 is mid-grace-window; its second quarter-turn
         // must still reach the gate so a leading double turn resolves cleanly.
-        const armed = scrambleDoneMoves.length > 0 || wasSolvedBeforeMove || scramblePartialGate.hasHeld();
-        if (activeMode === 'scramble' && scrambleMoves.length > 0 && armed) {
+        const armed = trackDoneMoves.length > 0 || wasSolvedBeforeMove || scramblePartialGate.hasHeld();
+        if (TRACKING_MODES.includes(activeMode) && trackTargetMoves.length > 0 && armed) {
           scramblePartialGate.feed(moveStr);
         }
       });
@@ -247,7 +251,7 @@ export function useSmartCube() {
     const { pattern, physicalPattern } = useCubeStore.getState();
     const isSolved = physicalPattern ? isPatternSolved(physicalPattern) : (pattern ? isPatternSolved(pattern) : false);
     if (isSolved) {
-      useAppStore.getState().resetPhysicalScramble();
+      useAppStore.getState().resetPhysicalTrack();
       scramblePartialGate.reset();
     }
   }, [syncPhysicalPattern, setSmartCubeState, setMode, setVisualAlg, reconstructAlg]);

@@ -31,7 +31,12 @@ import {
 // z2-rotated pattern ("non-oriented puzzles are not supported"). So solve in the
 // default frame (apply z2 to undo the app's rotation) and relabel the solution
 // back through z2 — a 180° turn that swaps U<->D and L<->R, leaving F/B.
-const Z2_RELABEL: Record<string, string> = { U: 'D', D: 'U', L: 'R', R: 'L', F: 'F', B: 'B' };
+export const Z2_RELABEL: Record<string, string> = { U: 'D', D: 'U', L: 'R', R: 'L', F: 'F', B: 'B' };
+
+/** Relabel one move's face letter across a z2 rotation (U↔D, L↔R, F/B unchanged), keeping its modifier. */
+export function relabelMoveZ2Face(move: string): string {
+  return (Z2_RELABEL[move[0]] ?? move[0]) + move.slice(1);
+}
 
 export async function solvePhasePrefix(
   pattern: KPattern,
@@ -39,10 +44,7 @@ export async function solvePhasePrefix(
   activeSlot?: string
 ): Promise<string[]> {
   const solution = await experimentalSolve3x3x3IgnoringCenters(pattern.applyAlg(new Alg('z2')));
-  const moves = Array.from(solution.experimentalLeafMoves()).map((m) => {
-    const s = m.toString();
-    return (Z2_RELABEL[s[0]] ?? s[0]) + s.slice(1);
-  });
+  const moves = Array.from(solution.experimentalLeafMoves()).map((m) => relabelMoveZ2Face(m.toString()));
 
   const slot = (activeSlot || 'FR') as F2LSlot;
   const goalReached = (p: KPattern): boolean => {

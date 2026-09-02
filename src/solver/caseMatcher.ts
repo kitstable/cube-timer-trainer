@@ -781,6 +781,23 @@ export class CaseMatcher {
     return null;
   }
 
+  /** Solved cube in the app's post-z2 reference frame (centers not solved, LL orientations are). */
+  public getSolvedPostZ2(): KPattern {
+    return this.solvedPostZ2;
+  }
+
+  /** Precomputed case list for a training phase — used by Training mode's scramble generator + UI filter. */
+  public getCases(phase: 'OLL' | 'PLL' | 'F2L'): PrecomputedCase[] {
+    if (phase === 'OLL') return this.ollCases;
+    if (phase === 'PLL') return this.pllCases;
+    return this.f2lCases;
+  }
+
+  /** The 3 2-Look OLL edge-orientation cases (Dot / Line / L-shape), for the yellow-cross drill. */
+  public getTwoLookEdgeCases(): PrecomputedCase[] {
+    return this.oll2LookEdgeCases;
+  }
+
   private getSlotForPiece(piece: number, isCorner: boolean, pattern: KPattern): string | 'U' {
     const arr = isCorner ? pattern.patternData.CORNERS.pieces : pattern.patternData.EDGES.pieces;
     const at = arr.indexOf(piece);

@@ -7,7 +7,7 @@
  * rings the cube amber and shows a correction chip — all of which vanish tens of ms later
  * when the second `R` lands.
  *
- * This gate sits between the BLE move event and `applyPhysicalScrambleMove`. When a turn
+ * This gate sits between the BLE move event and `applyPhysicalTrackMove`. When a turn
  * would classify as `partial` it is *held* for `graceMs`; if a second turn arrives first
  * the held move is committed and the new one processed normally (a fluid double turn then
  * resolves to `progress` with no amber frame). If the grace timer fires with the move
@@ -26,7 +26,7 @@ import type { ScrambleMoveKind } from './scrambleTracker';
 export interface ScramblePartialGateDeps {
   /** Classify a turn against the current tracker state (kind is all the gate needs). */
   classify: (move: string) => ScrambleMoveKind;
-  /** Commit a turn to the tracker (`applyPhysicalScrambleMove`). */
+  /** Commit a turn to the tracker (`applyPhysicalTrackMove`). */
   commit: (move: string) => void;
   /** Grace window in ms to wait for a second quarter-turn before showing a partial. */
   graceMs: number;

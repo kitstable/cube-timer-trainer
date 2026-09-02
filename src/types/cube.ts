@@ -14,7 +14,7 @@ export type CFOPPhase =
 
 export type F2LSlotId = 'FR' | 'FL' | 'BR' | 'BL';
 
-export type AppMode = 'scramble' | 'timed' | 'guided' | 'history';
+export type AppMode = 'scramble' | 'timed' | 'guided' | 'training' | 'history';
 
 export type TechniqueTier = '2look' | 'fullPLL' | 'fullCFOP';
 export type NotationMode = 'simplified' | 'standard';

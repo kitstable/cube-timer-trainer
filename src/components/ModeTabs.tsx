@@ -6,6 +6,7 @@ const TABS: { id: AppMode; label: string }[] = [
   { id: 'scramble', label: 'Scramble' },
   { id: 'timed', label: 'Timed' },
   { id: 'guided', label: 'Guided' },
+  { id: 'training', label: 'Training' },
   { id: 'history', label: 'History' },
 ];
 

@@ -46,6 +46,34 @@ export interface Solve {
   createdAt: number;
 }
 
+export type TrainingPhase = 'OLL' | 'PLL' | 'F2L' | 'cross';
+
+/**
+ * One completed Training-mode rep. Kept in its own Dexie table (not appended to `Solve`)
+ * so it never bloats the `getSolvesByProfile` full-scan that runs on every History/stats
+ * render. Populated for both smart-cube and on-screen (no-cube) reps.
+ */
+export interface TrainingRep {
+  id: string;
+  profileId: string;
+  phase: TrainingPhase;
+  /** Drill method within the phase, e.g. "full" or a 2-Look drill id ("oll-corners"). */
+  method?: string;
+  /** CFOP case name drilled (e.g. "OLL-21 Antisune"). Empty for Cross. */
+  caseName: string;
+  /** F2L slot when phase === 'F2L'. */
+  slot?: string;
+  /** Physical/tapped moves of the solve attempt (not the setup scramble). */
+  moves: string[];
+  /** Attempt duration in ms (from first move / entering attempt, to completion). */
+  timeMs: number;
+  /** Whether the rep was solved (vs. skipped / gave up). */
+  success: boolean;
+  /** True if a smart cube drove the rep. */
+  cubeConnected: boolean;
+  createdAt: number;
+}
+
 /**
  * Calculates the effective solve time in milliseconds taking +2 penalty into account.
  */

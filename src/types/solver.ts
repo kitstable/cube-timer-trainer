@@ -32,7 +32,13 @@ export type SolverWorkerRequest =
       tier?: any;
       method?: any;
     }
-  | { type: 'RECONSTRUCT_ALG'; patternData: any };
+  | { type: 'RECONSTRUCT_ALG'; patternData: any }
+  | {
+      type: 'GENERATE_TRAINING_SCRAMBLE';
+      caseSource: 'OLL' | 'PLL' | 'F2L' | 'OLL_2LOOK_EDGE';
+      /** Non-empty allowlist of dataset case names to pick a random target from. */
+      caseNames: string[];
+    };
 
 
 
@@ -50,4 +56,13 @@ export type SolverWorkerResponse =
       targetSlot?: string;
     }
   | { type: 'ALG_RECONSTRUCTED'; alg: string }
+  | {
+      type: 'TRAINING_SCRAMBLE_GENERATED';
+      moves: string[];
+      caseName: string;
+      subset: string;
+      algorithm: string;
+      algorithmSimplified: string;
+      targetSlot?: string;
+    }
   | { type: 'ERROR'; message: string };

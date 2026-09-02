@@ -5,6 +5,7 @@ import { CaseMatcher } from './caseMatcher';
 import { solveCrossBFS } from './crossBfs';
 import { findHint } from './findHint';
 import { reconstructAlgForPattern } from './fullSolveFallback';
+import { generateCaseScramble } from './trainingScrambleGenerator';
 import type { SolverWorkerRequest, SolverWorkerResponse } from '../types/solver';
 
 
@@ -86,6 +87,44 @@ self.onmessage = async (e: MessageEvent<SolverWorkerRequest>) => {
           caseName: result.caseName,
           subset: result.subset,
           targetSlot: result.targetSlot,
+        } satisfies SolverWorkerResponse);
+        break;
+      }
+
+      case 'GENERATE_TRAINING_SCRAMBLE': {
+        if (!caseMatcher) {
+          self.postMessage({ type: 'ERROR', message: 'Case database not initialized' } satisfies SolverWorkerResponse);
+          break;
+        }
+        const pool =
+          req.caseSource === 'OLL_2LOOK_EDGE'
+            ? caseMatcher.getTwoLookEdgeCases()
+            : caseMatcher.getCases(req.caseSource);
+        // 2-Look edge cases are stored name-prefixed ("2-Look OLL · Edges: Dot"); match either.
+        const wanted = new Set(req.caseNames);
+        const candidates = pool.filter(
+          (c) => wanted.has(c.name) || wanted.has(c.name.replace(/^2-Look OLL · /, ''))
+        );
+        if (candidates.length === 0) {
+          self.postMessage({
+            type: 'ERROR',
+            message: `No ${req.caseSource} cases match: ${req.caseNames.join(', ')}`,
+          } satisfies SolverWorkerResponse);
+          break;
+        }
+        const target = candidates[Math.floor(Math.random() * candidates.length)];
+        const moves = await generateCaseScramble(caseMatcher.getSolvedPostZ2(), target, {
+          randomisePermutation: req.caseSource === 'F2L',
+          pllPool: req.caseSource === 'F2L' ? caseMatcher.getCases('PLL') : undefined,
+        });
+        self.postMessage({
+          type: 'TRAINING_SCRAMBLE_GENERATED',
+          moves,
+          caseName: target.name.replace(/^2-Look OLL · /, ''),
+          subset: target.subset,
+          algorithm: target.algorithm,
+          algorithmSimplified: target.algorithmSimplified,
+          targetSlot: target.targetSlot,
         } satisfies SolverWorkerResponse);
         break;
       }

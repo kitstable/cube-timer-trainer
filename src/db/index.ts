@@ -1,15 +1,20 @@
 import Dexie, { type EntityTable } from 'dexie';
-import type { Profile, Solve } from '../types/db';
+import type { Profile, Solve, TrainingRep } from '../types/db';
 
 export class CubeDatabase extends Dexie {
   profiles!: EntityTable<Profile, 'id'>;
   solves!: EntityTable<Solve, 'id'>;
+  trainingReps!: EntityTable<TrainingRep, 'id'>;
 
   constructor() {
     super('CubeTrainerDB');
     this.version(1).stores({
       profiles: 'id, name, createdAt',
       solves: 'id, profileId, mode, cubeConnected, totalTimeMs, createdAt',
+    });
+    // v2 — additive: Training-mode reps in their own table, kept off the solves query.
+    this.version(2).stores({
+      trainingReps: 'id, profileId, phase, caseName, createdAt',
     });
   }
 }

@@ -9,6 +9,7 @@ import { ModeTabs } from './components/ModeTabs';
 import { ScrambleView } from './components/views/ScrambleView';
 import { TimedSolveView } from './components/views/TimedSolveView';
 import { GuidedSolveView } from './components/views/GuidedSolveView';
+import { TrainingView } from './components/views/TrainingView';
 import { HistoryView } from './components/views/HistoryView';
 import { ConnectionModal } from './components/ConnectionModal';
 import { ProfileModal } from './components/ProfileModal';
@@ -30,12 +31,17 @@ export function App() {
     setup();
   }, [initCubeStore, setProfileId]);
 
-  // Sync profile name
+  // Sync profile name. Tolerates the DB still opening/upgrading on first load — this
+  // effect re-runs when `initializeDatabase()` sets `currentProfileId`.
   useEffect(() => {
     const fetchProfileName = async () => {
-      const profiles = await getAllProfiles();
-      const active = profiles.find((p: Profile) => p.id === currentProfileId);
-      if (active) setProfileName(active.name);
+      try {
+        const profiles = await getAllProfiles();
+        const active = profiles.find((p: Profile) => p.id === currentProfileId);
+        if (active) setProfileName(active.name);
+      } catch (err) {
+        console.warn('Profile name sync deferred (database not ready yet):', err);
+      }
     };
     fetchProfileName();
   }, [currentProfileId, isProfileModalOpen]);
@@ -56,6 +62,7 @@ export function App() {
           {activeMode === 'scramble' && <ScrambleView />}
           {activeMode === 'timed' && <TimedSolveView />}
           {activeMode === 'guided' && <GuidedSolveView />}
+          {activeMode === 'training' && <TrainingView />}
           {activeMode === 'history' && <HistoryView />}
         </main>
 

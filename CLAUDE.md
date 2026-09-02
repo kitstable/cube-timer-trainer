@@ -5,7 +5,7 @@ Guidance for Claude Code (or any future contributor) working in this repo.
 ## What this is
 
 A mobile-first PWA that pairs with a Bluetooth smart cube (GAN / QiYi / Giiker-Mijia /
-GoCube), reads its live physical state, and uses that to drive two solving modes:
+GoCube), reads its live physical state, and uses that to drive several solving/practice modes:
 
 - **Scramble** — generates a WCA scramble, shows it as a walkthrough, and auto-advances as
   the physical cube matches each expected turn.
@@ -17,10 +17,16 @@ GoCube), reads its live physical state, and uses that to drive two solving modes
   case-database matching + a full-solve fallback so it never gets stuck), with independent
   technique-tier (2-look / Full PLL / Full CFOP) and notation-mode (Simplified / Standard)
   settings.
+- **Training** — isolated, repeatable per-case drills (OLL / PLL, plus a 2-Look drill family
+  locked to small alg sets — Sune/Anti-Sune, yellow-cross algs, Aa/Ab, Ua/Ub/H/Z). A scramble
+  sets up one case without leaking the solution; you solve it (physically or via an on-screen
+  pad) and completion is auto-detected. Reps persist to their own Dexie table. See
+  `resources/training-mode-spec.md` and the "Training mode & 2-Look drills" section below.
 
 The full product/architecture spec this was built against lives at
-`resources/cube-trainer-spec.md` — read that first for the *intended* design; this file is
-about the state of the actual code and where it stands relative to that intent.
+`resources/cube-trainer-spec.md` — read that first for the *intended* design; a companion spec
+for the Training rework is `resources/training-mode-spec.md`. This file is about the state of
+the actual code and where it stands relative to that intent.
 
 ## Stack
 
@@ -165,7 +171,7 @@ Both are on `claude/smart-cube-connection-state-rs2s9a`.
    separate `R` quarter-turn events (GAN/QiYi never emit doubles), so the first `R` used to
    flash the amber "partial" cue for the tens of ms until the second landed.
    `src/utils/scramblePartialGate.ts` (pure, dependency-injected) now sits between the BLE
-   event and `applyPhysicalScrambleMove` in `useSmartCube.ts`: a turn that classifies
+   event and `applyPhysicalTrackMove` in `useSmartCube.ts`: a turn that classifies
    `partial` is *held* for `SCRAMBLE_PARTIAL_GRACE_MS` (800ms); a second turn in that window
    commits the held one and processes the new one (a real double turn resolves to `progress`
    with no amber frame), and the timer firing commits it (genuine mid-face stop → cue
@@ -215,6 +221,59 @@ Both are on `claude/smart-cube-connection-state-rs2s9a`.
      ✓, and flashes its phase colour for ~900ms (own 100ms tick so the active phase's clock
      and the flash expiry advance between physical turns). Uses the same `phaseRecognitionMs`
      as the post-solve breakdown.
+
+## Training mode & 2-Look drills (later session — see `resources/training-mode-spec.md`)
+
+New **Training** tab: isolated, repeatable CFOP-phase drills. Built against
+`resources/training-mode-spec.md`. Phases 1–2 of that spec's build order are done (OLL + PLL);
+F2L / Cross / the Guided Solve rewrite are still pending (spec §6, §8).
+
+- **Shared physical-tracking pipeline, generalised.** The Scramble-mode move tracker is now
+  mode-neutral so Training reuses it instead of a second copy. `useAppStore` fields renamed
+  `scramble{Remaining,Done}Moves` / `scrambleFeedback` / `scrambleCorrectionActive` →
+  `track{Remaining,Done}Moves` / `trackFeedback` / `trackCorrectionActive`; actions →
+  `applyPhysicalTrackMove` / `clearTrackFeedback` / `resetPhysicalTrack`; new `trackTargetMoves`
+  + `setTrackTarget(moves)`. `useSmartCube.ts`'s partial-gate now fires for
+  `TRACKING_MODES = ['scramble', 'training']`. `scrambleTracker.ts` / `scramblePartialGate.ts`
+  themselves were already sequence-agnostic and are unchanged. Scramble mode behaviour is
+  identical — it just sets `trackTargetMoves` = its WCA scramble.
+- **`src/solver/trainingScrambleGenerator.ts`** (worker, `GENERATE_TRAINING_SCRAMBLE`) —
+  `generateCaseScramble(solvedPostZ2, precomputedCase, opts)`: builds the case state
+  (`solvedPostZ2 · invSimplifiedAlg`), random AUF, then the **exact `solvePhasePrefix` z2
+  dance** — `z2`, `experimentalSolve3x3x3IgnoringCenters`, relabel each solution move's face
+  via `relabelMoveZ2Face` (now exported from `fullSolveFallback.ts` alongside `Z2_RELABEL`),
+  invert, `simplifyMoveSequence`. Output is in the **post-z2 frame**, matcher-checkable.
+  - **Spec §5 deviation:** the spec's "layer a random PLL on an OLL case for permutation
+    variety" is dropped for OLL/PLL — a PLL on a *misoriented* LL permutes the orientation
+    values among the 4 positions, so `matchOLL` stops identifying the case. OLL/PLL variety =
+    random AUF only (the cubing.js solver is deterministic → 4 variants/case).
+    `randomisePermutation` is kept for F2L (LL noise above the slot is harmless there).
+- **Frame handling in `TrainingView.tsx`** (this is the z2-gotcha surface — there are tests):
+  the generator's post-z2 scramble is relabelled to the **raw** smart-cube frame
+  (`relabelMoveZ2`) for `trackTargetMoves` + the connected guide + the no-cube stepping ribbon
+  (matches ScrambleView's white-up convention). The no-cube 3D view + on-screen keypad +
+  `attemptPattern` stay in **post-z2** (yellow-up, `<twisty-player setupAlg="z2">`) so the
+  learner can see the LL case. Completion: connected checks `isOLLSolved(physicalPattern · z2)`;
+  no-cube checks the predicate on `attemptPattern` **directly** (already post-z2 — an earlier
+  spurious extra `· z2` here was the one real bug found, now covered by
+  `trainingScrambleGenerator.test.ts`).
+- **2-Look drill family — `src/solver/twoLook.ts`** (pure). Four drills, each locked to a
+  small alg set: `oll-edges` (yellow-cross algs), `oll-corners` (Sune / Anti-Sune),
+  `pll-corners` (Aa / Ab), `pll-edges` (Ua / Ub / H / Z). `buildTwoLookDrills(dataset)`
+  resolves alg strings + case-name pools from `cfop-algorithms.json` (a test guards drift).
+  Predicates `isYellowCrossSolved` / `areTopCornersPlaced` / `isSolvedUpToAuf`.
+  `solveWithAlgSet(start, algs, isDone)` — BFS over `{alg set} × AUF`, powers the "Show me"
+  hint. Confirmed in data: OLL subset `"Oriented Edges"` === the 7 `twoLookRole: 'corners-only'`
+  cases. `useAppStore.trainingMethod` (`'full'` | drill id) + `trainingCaseAllow` (per-case
+  chip allowlist). `TrainingRep.method?` persisted.
+- **Persistence** — new Dexie table `trainingReps` via `db.version(2)` (additive, no data
+  migration; `src/db/index.ts`). `saveTrainingRep` / `getTrainingRepsByProfile` in
+  `repository.ts`, kept out of `getSolvesByProfile`'s per-render full scan. `App.tsx`'s
+  profile-name effect now `try/catch`es the cold-DB open race the `version(2)` bump widened.
+- Tests: `src/tests/trainingScrambleGenerator.test.ts` (all 57 OLL / 21 PLL / F2L-per-slot
+  scrambles verified with the production matchers as oracle; both completion framings),
+  `src/tests/twoLook.test.ts` (every corner case solvable by a Sune/Anti-Sune combo; every
+  drill reaches its goal; predicates).
 
 ## Where the code stands relative to the spec — open items to discuss
 
