@@ -13,6 +13,7 @@ import {
   relabelMoveZ2,
   isPatternSolved,
 } from '../../utils/kpuzzleHelper';
+import { relabelForDisplay } from '../../utils/relabelForDisplay';
 import {
   isOLLSolved,
   isFullySolved,
@@ -432,12 +433,16 @@ export const TrainingView: React.FC = () => {
 
   // --- 3D view alg ---
   const { setupAlg, viewAlg } = useMemo(() => {
-    if (connected) return { setupAlg: '', viewAlg: visualAlg };
-    const su = rep?.frame === 'raw' ? '' : 'z2';
-    if (!rep) return { setupAlg: 'z2', viewAlg: '' };
+    // 'raw' frame (Cross drill) → white-up; everything else → yellow-up.
+    const raw = (rep?.frame ?? config?.frame) === 'raw';
+    if (connected) {
+      return raw ? { setupAlg: '', viewAlg: visualAlg } : { setupAlg: 'z2', viewAlg: relabelForDisplay(visualAlg) };
+    }
+    const su = raw ? '' : 'z2';
+    if (!rep) return { setupAlg: su, viewAlg: '' };
     if (stage === 'scramble') return { setupAlg: su, viewAlg: rep.scrambleView.slice(0, stepIdx).join(' ') };
     return { setupAlg: su, viewAlg: [...rep.scrambleView, ...attemptActions].join(' ') };
-  }, [connected, visualAlg, rep, stage, stepIdx, attemptActions]);
+  }, [connected, visualAlg, rep, config?.frame, stage, stepIdx, attemptActions]);
 
   const feedbackKind = trackFeedback?.kind ?? null;
   const scrambleGuideDone = !connected && rep ? stepIdx >= rep.scrambleView.length : false;

@@ -286,6 +286,33 @@ Solve rewrite (spec §8) is still pending.
   framings), `src/tests/twoLook.test.ts` (every corner case solvable by a Sune/Anti-Sune combo;
   every drill reaches its goal; predicates).
 
+## Yellow-face-up 3D view (solve modes)
+
+`<twisty-player>` has no orientation prop (verified against the shipped `TwistyPlayerConfig`
+and the official docs — the camera options only orbit; orbiting to look from below shows the
+**D** face = white). To show a face other than white on top you reorient the cube with a
+rotation in `experimentalSetupAlg`, and then the move stream in `alg` must be in that same
+frame or every turn animates on the wrong face.
+
+- **`src/utils/relabelForDisplay.ts`** — pure `relabelForDisplay(alg: string): string`,
+  computes `z2 · X · z2` token by token (`U↔D`, `L↔R` + wides swap; `F`/`B`/`S`/`z` identity;
+  `M`/`E`/`x`/`y` keep-letter-flip-direction). **Render-only** — never feed its output back to
+  the store / solver / trackers / persistence, which all stay in the raw frame. Identity:
+  `A · z2 == z2 · relabelForDisplay(A)`.
+- **Yellow-up (`setupAlg="z2"` + `relabelForDisplay` on the raw-frame move stream):**
+  `TimedSolveView` (both branches), `GuidedSolveView` connected branch, `TrainingView`
+  connected branch (unless `rep.frame === 'raw'`). The no-cube Guided and no-cube Training
+  (OLL/PLL/F2L) paths were **already** yellow-up — their move streams are generated post-z2, so
+  they need no relabel and are untouched.
+- **White-up (unchanged):** `ScrambleView` (you hold white-up to apply a WCA scramble) and the
+  Training **Cross** drill (`frame: 'raw'` — you watch the cross form on top).
+- Tests: `src/tests/relabelForDisplay.test.ts` — token maps + a state-equality battery
+  (`solved·z2·relabelForDisplay(X) == solved·X·z2` for WCA scrambles, wide/slice algs, and
+  rotation-prefixed `visualAlg`-shaped algs) + token-stability (keeps `TwistyPlayerWrapper`'s
+  single-move `experimentalAddMove` fast path working). Verified in the running app: the Timed
+  twisty gets `z2` + a relabelled scramble, U-centre reads yellow, and the state is
+  piece-equal to `rawScramble · z2`.
+
 ## Guided Solve rewrite (spec §8 — done)
 
 `GuidedSolveView.tsx` was rewritten to follow the app's own architecture rule (it was the one
@@ -371,17 +398,11 @@ way:
    render, so the move blob should live in a **separate Dexie table** keyed by solve id
    (`db.version(2)`, additive — no data migration), fetched only when a solve detail view
    opens. Populated for smart-cube solves only.
-8. **Timed Solve 3D view is white-up; a "yellow face up" option is wanted (roadmap).**
-   Deliberately deferred. `<twisty-player>` has no view-orientation prop and no camera angle
-   shows yellow as a readable top face — it needs a true cube reorientation: prepend `z2` to
-   the displayed setup **and** transform every move letter handed to the visualizer
-   (`U↔D`, `L↔R`, `M↔M'`, `x↔x'`, `y↔y'`, slices, wides — `visualAlg` can contain rotations,
-   see `reconstructAlgForPattern`). That move-relabel is the exact "translate every face into
-   a new position" class of change that caused silent bugs before, so it must stay a pure
-   `relabelForDisplay(alg)` helper used **only** in `TimedSolveView`'s render — never near the
-   store, phase detection, solver, or persistence — with a unit test against a known scramble
-   (per the z2 gotcha rule above). ~25 lines + test + one wiring point; contained but not
-   free. Do it as its own change, not bundled with anything else.
+8. ~~**Timed Solve 3D view is white-up; a "yellow face up" option is wanted.**~~ **DONE** —
+   see the "Yellow-face-up 3D view" section below. Timed, connected Guided, and connected
+   Training (OLL/PLL/F2L) now render yellow-up via `setupAlg="z2"` + `relabelForDisplay(alg)`
+   (`src/utils/relabelForDisplay.ts`, render-only). Scramble mode and the Training Cross drill
+   stay white-up by design.
 9. **Some duplicated/vestigial pieces from incremental work:**
    - ~~`src/components/ui/MoveRibbon.tsx` unused~~ — deleted (Guided rewrite pass).
    - `ALL_F2L_SLOTS` is defined twice (`src/utils/constants.ts` and

@@ -8,6 +8,7 @@ import { useSolverWorker } from '../../hooks/useSolverWorker';
 import { useCubeStore } from '../../store/useCubeStore';
 import { useAppStore } from '../../store/useAppStore';
 import { formatTime } from '../../utils/telemetryCalculator';
+import { relabelForDisplay } from '../../utils/relabelForDisplay';
 import { PhaseBreakdown } from '../ui/PhaseBreakdown';
 import { LivePhaseSplits } from '../ui/LivePhaseSplits';
 import { PHASE_DISPLAY_NAMES } from '../../utils/constants';
@@ -60,8 +61,12 @@ export const TimedSolveView: React.FC = () => {
   // to remember) — use it directly instead of composing setup+moveHistory, which breaks
   // as soon as the cube was connected mid-solve with no known scramble string on file.
   const usePhysicalVisual = smartCube.isConnected && visualAlg.length > 0;
-  const setupAlg = usePhysicalVisual ? '' : (currentScramble || '');
-  const displayAlg = usePhysicalVisual ? visualAlg : solveMovesAlg;
+  // Yellow-face-up view: reorient the cube with a `z2` setup and relabel the raw-frame move
+  // stream into that frame (render-only — see utils/relabelForDisplay.ts).
+  const setupAlg = usePhysicalVisual
+    ? 'z2'
+    : `z2${currentScramble ? ` ${relabelForDisplay(currentScramble)}` : ''}`;
+  const displayAlg = relabelForDisplay(usePhysicalVisual ? visualAlg : solveMovesAlg);
   const cubeHeight = isDesktop ? 380 : 215;
 
   // Load session stats

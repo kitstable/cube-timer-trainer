@@ -9,6 +9,7 @@ import { useSolverWorker } from '../../hooks/useSolverWorker';
 import { evaluateCFOPFromPattern } from '../../utils/phaseDetector';
 import { classifyScrambleMove } from '../../utils/scrambleTracker';
 import { relabelMoveZ2 } from '../../utils/kpuzzleHelper';
+import { relabelForDisplay } from '../../utils/relabelForDisplay';
 import { saveSolve } from '../../db/repository';
 import { PHASE_DISPLAY_NAMES, ALL_F2L_SLOTS, getMoveDescription } from '../../utils/constants';
 import type { CFOPPhase, F2LSlotId, MoveHint, ScrambleFeedback, TechniqueTier, NotationMode } from '../../types/cube';
@@ -334,8 +335,10 @@ export const GuidedSolveView: React.FC = () => {
 
   const progressiveAlg = moveHistory.map((m) => m.move).join(' ').trim();
   const cubeHeight = isDesktop ? 380 : 215;
-  const setupAlg = connected ? '' : currentScramble ? `${currentScramble} z2` : 'z2';
-  const viewAlg = connected ? visualAlg : progressiveAlg;
+  // Yellow-face-up view. No-cube already renders post-z2 (hint moves are generated in that
+  // frame); connected feeds raw-frame `visualAlg`, so relabel it (render-only).
+  const setupAlg = connected ? 'z2' : currentScramble ? `${currentScramble} z2` : 'z2';
+  const viewAlg = connected ? relabelForDisplay(visualAlg) : progressiveAlg;
 
   const TIERS: { id: TechniqueTier; label: string }[] = [
     { id: '2look', label: '2-Look' },
