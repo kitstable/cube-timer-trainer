@@ -286,25 +286,52 @@ Solve rewrite (spec §8) is still pending.
   framings), `src/tests/twoLook.test.ts` (every corner case solvable by a Sune/Anti-Sune combo;
   every drill reaches its goal; predicates).
 
+## Guided Solve rewrite (spec §8 — done)
+
+`GuidedSolveView.tsx` was rewritten to follow the app's own architecture rule (it was the one
+view that didn't — the old mount effect fabricated an *unrelated* scramble and never read the
+live cube).
+
+- **Connected:** the hint is disposable, recomputed from the live physical `KPattern` after
+  every real turn. `getHintPattern()` returns `physicalPattern.applyAlg('z2')` (raw smart-cube
+  frame → post-z2, the frame `findHint` / `evaluateCFOPFromPattern` expect); a `useEffect` on
+  `physicalPattern` re-runs `fetchHintForCurrentPhase` on every move. **No "was that the
+  expected move" branching** — a turn just triggers a fresh recompute. Phase / solved-slots for
+  the UI come from `evaluateCFOPFromPattern(hintPattern)`, not `useCubeStore.monotonicPhase`
+  (which is raw-frame and wrong here). Manual stepping (Next-move / ribbon-tap `applyMove`) is
+  hidden when connected. The 3D view uses `visualAlg` (like Scramble/Timed). A stale
+  "assumed-solved" first read is resolved by the existing header resync button.
+- **No cube:** unchanged manual practice path — seed from the Scramble-tab `currentScramble`
+  or generate one, step the hint with Next-move / ribbon. (Generating a scramble here is fine —
+  it's explicit and there's no live cube to disconnect from; the bug was fabricating one *while
+  connected*.)
+- `saveSolve({ mode: 'guided', … })` fires when a connected guided solve reaches solved
+  (`solveStartRef` snapshots time + move count on the first unsolved read; `phases: []`,
+  `scrambleMoves: []`, `totalMoves` from `moveHistory`). Closes the "guided solves never saved"
+  gap.
+- **Auto-play retired** — the `isAutoAdvancing` state, the 2s `setInterval`, and the Auto/Pause
+  button are gone (a real feature removal, per spec §8: scripted playback with no required
+  input is the low-engagement path the whole rework moves away from).
+- Cleanup that fell out of this: `useAppStore.guidanceTier`/`guidanceMethod` (+ their setters
+  and the `GuidanceTier`/`GuidanceMethod` type aliases) deleted — vestigial, last consumer
+  removed; `findHint.ts`'s dead `tier === 'confident'` branches removed; unused
+  `src/components/ui/MoveRibbon.tsx` deleted.
+- Tests: `src/tests/guidedConvergence.test.ts` still green (3 tiers × 2 notations × 12
+  scrambles), plus a new "connected-cube path" case that drives the exact
+  `physicalPattern · z2` → `findHint` → relabel-back loop and asserts convergence. Connected
+  Guided against real hardware is still unverified (no BLE in this env).
+
 ## Where the code stands relative to the spec — open items to discuss
 
 The spec is the intended design; here's where the actual code hasn't caught up, or made a
 different call than the spec described. Flagging these rather than silently deciding either
 way:
 
-1. **Guided Solve doesn't read the physical cube at all.** This is the biggest gap. Spec §5
-   is explicit: a real move event should update ground truth and the hint should be
-   disposable — recomputed fresh, never "was that a mistake" logic. Right now
-   `GuidedSolveView.tsx` has zero references to the smart cube; `applyMove` still fires on
-   every physical turn (so `useCubeStore.pattern` stays correct), but nothing in Guided mode
-   listens for it — hint progression only advances via the Next-move button, a ribbon tap, or
-   the 2-second auto-play timer. Turning the cube while in Guided mode does nothing visible.
-   This is almost certainly the "going in circles" feeling from before this session's fixes.
-   Worth a dedicated pass mirroring what `ScrambleView`/`useSmartCube.ts` already do for
-   Scramble mode's move-matching.
-2. **Guided-mode solves are never saved.** `saveSolve` is only ever called from
-   `useTimer.ts` (Timed Solve). `Solve.mode` in `src/types/db.ts` includes `'guided'` as a
-   valid value, but nothing produces one — Guided Solve has no History entries at all.
+1. ~~**Guided Solve doesn't read the physical cube at all.**~~ **DONE** — see the "Guided Solve
+   rewrite" section above. Connected Guided now recomputes the hint from the live `KPattern`
+   after every real turn; no fabricated scramble; no "was that a mistake" logic.
+2. ~~**Guided-mode solves are never saved.**~~ **DONE** — `saveSolve({ mode: 'guided' })` fires
+   on a completed connected guided solve.
 3. **LBL timing mode (spec §10b) isn't built.** No `method: 'F2L' | 'LBL'` field on `Solve`,
    no `lbl-corners`/`lbl-edges` phase names, no UI toggle. Whole section is unbuilt — worth
    confirming whether it's still wanted before investing in it.
@@ -339,17 +366,13 @@ way:
    (per the z2 gotcha rule above). ~25 lines + test + one wiring point; contained but not
    free. Do it as its own change, not bundled with anything else.
 9. **Some duplicated/vestigial pieces from incremental work:**
-   - `src/components/ui/MoveRibbon.tsx` is unused — `GuidedSolveView` and `ScrambleView`
-     each hand-roll their own near-identical move-chip ribbon inline instead.
+   - ~~`src/components/ui/MoveRibbon.tsx` unused~~ — deleted (Guided rewrite pass).
    - `ALL_F2L_SLOTS` is defined twice (`src/utils/constants.ts` and
      `src/solver/cfopInvariants.ts`), as are the solved-piece tables
      (`kpuzzleHelper.ts` vs `cfopInvariants.ts`) — same underlying data, two places to keep
-     in sync, which is exactly the kind of drift risk noted in the z2 gotcha above.
-   - `useAppStore` has `guidanceTier`/`guidanceMethod` fields that duplicate `techniqueTier`
-     (every setter writes all three); nothing reads the other two independently.
-   - `findHint.ts` checks for a `'confident'` tier value that doesn't exist in the
-     `TechniqueTier` type (`'2look' | 'fullPLL' | 'fullCFOP'`) — dead branch, likely a
-     leftover from a renamed tier.
+     in sync, which is exactly the kind of drift risk noted in the z2 gotcha above. **Still open.**
+   - ~~`useAppStore.guidanceTier`/`guidanceMethod`~~ — deleted (Guided rewrite pass).
+   - ~~`findHint.ts` dead `'confident'` tier branch~~ — deleted (Guided rewrite pass).
 
 None of these are urgent fixes on their own — flagging them here so a decision gets made
 deliberately (fix, descope, or explicitly accept) rather than each one being quietly

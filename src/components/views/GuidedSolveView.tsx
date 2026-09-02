@@ -1,68 +1,89 @@
-import React, { useEffect, useState, useCallback } from 'react';
-import { RefreshCw, ArrowRight, RotateCw, Play, Pause, ChevronLeft, ChevronRight, CheckCircle2, RotateCcw } from 'lucide-react';
+import React, { useEffect, useRef, useState, useCallback } from 'react';
+import { Alg } from 'cubing/alg';
+import { RefreshCw, ArrowRight, RotateCw, ChevronLeft, ChevronRight, CheckCircle2, RotateCcw } from 'lucide-react';
 import { TwistyPlayerWrapper } from '../TwistyPlayerWrapper';
 import { PhaseRail } from '../ui/PhaseRail';
 import { useCubeStore } from '../../store/useCubeStore';
 import { useAppStore } from '../../store/useAppStore';
 import { useSolverWorker } from '../../hooks/useSolverWorker';
+import { evaluateCFOPFromPattern } from '../../utils/phaseDetector';
+import { saveSolve } from '../../db/repository';
 import { PHASE_DISPLAY_NAMES, ALL_F2L_SLOTS, getMoveDescription } from '../../utils/constants';
-import type { MoveHint, TechniqueTier, NotationMode } from '../../types/cube';
+import type { CFOPPhase, F2LSlotId, MoveHint, TechniqueTier, NotationMode } from '../../types/cube';
 import { useIsDesktop } from '../../hooks/useMediaQuery';
 
+/**
+ * Guided Solve — a CFOP teaching walkthrough.
+ *
+ * With a smart cube connected this follows `cube-trainer-spec.md` §5 strictly: the hint is
+ * disposable, recomputed from the *live* physical `KPattern` after every real move. There is
+ * no fabricated scramble, no independent progress state, and no "was that the expected move"
+ * branching — a turn just triggers "recompute the hint from the current real state".
+ *
+ * Without a cube it's the manual practice path: seed from the Scramble-tab scramble (or make
+ * one), and step through the hint with the Next-move button / ribbon (virtual `applyMove`).
+ */
 export const GuidedSolveView: React.FC = () => {
-  const { pattern, monotonicPhase, solvedSlots, moveHistory, applyMove, undoLastMove, undoMoves, setScramble: setCubeStoreScramble } = useCubeStore();
-  const { currentScramble, setScramble: setAppScramble, setMode, techniqueTier, setTechniqueTier, notationMode, setNotationMode } = useAppStore();
+  const {
+    pattern,
+    moveHistory,
+    visualAlg,
+    smartCube,
+    applyMove,
+    undoLastMove,
+    undoMoves,
+    setScramble: setCubeStoreScramble,
+  } = useCubeStore();
+  const physicalPattern = useCubeStore((s) => s.physicalPattern);
+  const { currentScramble, currentProfileId, setScramble: setAppScramble, setMode, techniqueTier, setTechniqueTier, notationMode, setNotationMode } =
+    useAppStore();
   const { findHint, generateScramble, isReady } = useSolverWorker();
   const isDesktop = useIsDesktop();
+
+  const connected = smartCube.isConnected;
 
   const [currentHint, setCurrentHint] = useState<MoveHint | null>(null);
   const [hintMoveIndex, setHintMoveIndex] = useState<number>(0);
   const [isCalculating, setIsCalculating] = useState<boolean>(false);
-  const [isAutoAdvancing, setIsAutoAdvancing] = useState<boolean>(false);
+  // Phase / slots derived from the pattern the hint was computed against (the live physical
+  // cube when connected — `useCubeStore.monotonicPhase` is the wrong frame there).
+  const [livePhase, setLivePhase] = useState<CFOPPhase>('cross');
+  const [liveSolvedSlots, setLiveSolvedSlots] = useState<F2LSlotId[]>([]);
 
-  // Sync scramble to pattern on mount or generate if empty
-  useEffect(() => {
-    const initScrambleState = async () => {
-      const state = useCubeStore.getState();
-      if (currentScramble) {
-        if (!state.pattern || (state.moveHistory.length === 0 && (state.monotonicPhase === 'solved' || state.scramblePattern === null))) {
-          await setCubeStoreScramble(currentScramble);
-        }
-      } else if (isReady) {
-        try {
-          const res = await generateScramble();
-          setAppScramble(res.scramble, res.moves);
-          await setCubeStoreScramble(res.scramble);
-        } catch (err) {
-          console.warn('Failed to auto-generate scramble for guided solve:', err);
-        }
-      }
-    };
-    initScrambleState();
-  }, [currentScramble, isReady, setCubeStoreScramble, setAppScramble, generateScramble]);
+  // Connected-solve timing (for saving a `mode: 'guided'` Solve on completion).
+  const solveStartRef = useRef<{ ts: number; moveCount: number } | null>(null);
+  const solveSavedRef = useRef<boolean>(false);
 
-  // Fetch hint for the active phase and lock it
+  /** The pattern the hint engine should read, always in the app's post-z2 frame. */
+  const getHintPattern = useCallback(() => {
+    const st = useCubeStore.getState();
+    if (st.smartCube.isConnected) {
+      return st.physicalPattern ? st.physicalPattern.applyAlg(new Alg('z2')) : null;
+    }
+    return st.pattern;
+  }, []);
+
   const fetchHintForCurrentPhase = useCallback(
     async (tierOverride?: TechniqueTier, notationOverride?: NotationMode) => {
-      const currentPattern = useCubeStore.getState().pattern;
-      const currentPhase = useCubeStore.getState().monotonicPhase;
-      const currentSolvedSlots = useCubeStore.getState().solvedSlots;
+      const hintPattern = getHintPattern();
+      if (!hintPattern || !isReady) return;
 
-      if (!currentPattern || !isReady) return;
+      const status = evaluateCFOPFromPattern(hintPattern);
+      const phase = status.currentPhase;
+      setLivePhase(phase);
+      setLiveSolvedSlots(status.solvedSlots);
 
       const activeTier = tierOverride || techniqueTier;
       const activeNotation = notationOverride || notationMode;
       setIsCalculating(true);
-
       try {
-        // If in F2L phase, find the next unsolved slot
-        const nextUnsolvedSlot = ALL_F2L_SLOTS.find((s) => !currentSolvedSlots.includes(s));
-        const res = await findHint(currentPhase, currentPattern.patternData, nextUnsolvedSlot, activeTier, activeNotation);
+        const nextUnsolvedSlot = ALL_F2L_SLOTS.find((s) => !status.solvedSlots.includes(s));
+        const res = await findHint(phase, hintPattern.patternData, nextUnsolvedSlot, activeTier, activeNotation);
         if (res) {
-          const hintPhase = (res.phase || currentPhase) as any;
+          const hintPhase = (res.phase || phase) as CFOPPhase;
           setCurrentHint({
             phase: hintPhase,
-            phaseName: (PHASE_DISPLAY_NAMES as any)[hintPhase] || hintPhase,
+            phaseName: (PHASE_DISPLAY_NAMES as Record<string, string>)[hintPhase] || hintPhase,
             moves: res.moves || [],
             currentIndex: 0,
             caseName: res.caseName || 'Guidance',
@@ -76,142 +97,226 @@ export const GuidedSolveView: React.FC = () => {
         setIsCalculating(false);
       }
     },
-    [isReady, findHint, techniqueTier, notationMode]
+    [getHintPattern, isReady, findHint, techniqueTier, notationMode]
   );
 
-  // Initial hint fetch when solver and cube pattern are ready
+  // Init on mount / connection change.
   useEffect(() => {
-    if (isReady && pattern && !currentHint) {
-      fetchHintForCurrentPhase();
+    const st = useCubeStore.getState();
+    if (st.smartCube.isConnected) {
+      // Connected: never fabricate a scramble — the hint reads the live cube. A stale
+      // "assumed solved" first read is resolved by the header resync button.
+      if (isReady) fetchHintForCurrentPhase();
+      return;
     }
-  }, [isReady, pattern, currentHint, fetchHintForCurrentPhase]);
+    // No cube — the manual practice path.
+    if (currentScramble) {
+      if (
+        !st.pattern ||
+        (st.moveHistory.length === 0 && (st.monotonicPhase === 'solved' || st.scramblePattern === null))
+      ) {
+        void setCubeStoreScramble(currentScramble);
+      }
+    } else if (isReady) {
+      generateScramble()
+        .then((res) => {
+          setAppScramble(res.scramble, res.moves);
+          return setCubeStoreScramble(res.scramble);
+        })
+        .catch((err) => console.warn('Failed to auto-generate scramble for guided solve:', err));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [connected, currentScramble, isReady]);
+
+  // Initial hint fetch once the solver + a pattern are ready (no-cube path).
+  useEffect(() => {
+    if (isReady && !connected && pattern && !currentHint) fetchHintForCurrentPhase();
+  }, [isReady, connected, pattern, currentHint, fetchHintForCurrentPhase]);
+
+  // Connected: every real physical turn advances `physicalPattern` — recompute the hint
+  // from scratch, per cube-trainer-spec.md §5. No "was that the expected move" logic.
+  useEffect(() => {
+    if (!connected || !isReady) return;
+    fetchHintForCurrentPhase();
+  }, [connected, isReady, physicalPattern, fetchHintForCurrentPhase]);
+
+  // Connected: track solve timing and save a `mode: 'guided'` Solve when the cube is solved.
+  useEffect(() => {
+    if (!connected) {
+      solveStartRef.current = null;
+      solveSavedRef.current = false;
+      return;
+    }
+    const hp = getHintPattern();
+    if (!hp) return;
+    const solved = evaluateCFOPFromPattern(hp).currentPhase === 'solved';
+
+    if (!solved) {
+      solveSavedRef.current = false;
+      if (!solveStartRef.current) {
+        solveStartRef.current = { ts: performance.now(), moveCount: useCubeStore.getState().moveHistory.length };
+      }
+    } else if (solveStartRef.current && !solveSavedRef.current) {
+      const started = solveStartRef.current;
+      solveSavedRef.current = true;
+      solveStartRef.current = null;
+      const totalMoves = Math.max(0, useCubeStore.getState().moveHistory.length - started.moveCount);
+      if (totalMoves > 0) {
+        void saveSolve({
+          profileId: currentProfileId,
+          scrambleMoves: [],
+          mode: 'guided',
+          cubeConnected: true,
+          phases: [],
+          totalTimeMs: Math.round(performance.now() - started.ts),
+          totalMoves,
+        });
+      }
+    }
+  }, [connected, physicalPattern, getHintPattern, currentProfileId]);
 
   const handleTierChange = (newTier: TechniqueTier) => {
     setTechniqueTier(newTier);
-    setIsAutoAdvancing(false);
     fetchHintForCurrentPhase(newTier, notationMode);
   };
 
   const handleNotationChange = (newMode: NotationMode) => {
     setNotationMode(newMode);
-    setIsAutoAdvancing(false);
     fetchHintForCurrentPhase(techniqueTier, newMode);
   };
 
-  // Advance single move in hint (when tapping "Next move" or "Step")
+  // --- No-cube manual stepping (virtual `applyMove`); hidden when a cube is connected. ---
   const handleExecuteNextMove = useCallback(() => {
-    if (!currentHint || currentHint.moves.length === 0) return;
-
+    if (connected || !currentHint || currentHint.moves.length === 0) return;
     if (hintMoveIndex < currentHint.moves.length) {
       const move = currentHint.moves[hintMoveIndex];
       if (move) {
         applyMove(move);
         const nextIdx = hintMoveIndex + 1;
         setHintMoveIndex(nextIdx);
-
-        // ONLY when all moves in this hint/case are completed, fetch the next stage hint!
         if (nextIdx >= currentHint.moves.length) {
-          setTimeout(() => {
-            fetchHintForCurrentPhase();
-          }, 80);
+          setTimeout(() => fetchHintForCurrentPhase(), 80);
         }
       }
     }
-  }, [currentHint, hintMoveIndex, applyMove, fetchHintForCurrentPhase]);
+  }, [connected, currentHint, hintMoveIndex, applyMove, fetchHintForCurrentPhase]);
 
-  // Step back 1 move (undo last move on cube and 3D visualizer)
   const handleStepBackMove = useCallback(() => {
-    setIsAutoAdvancing(false);
-    if (hintMoveIndex > 0) {
-      undoLastMove();
-      setHintMoveIndex((prev) => prev - 1);
-    }
-  }, [hintMoveIndex, undoLastMove]);
+    if (connected || hintMoveIndex === 0) return;
+    undoLastMove();
+    setHintMoveIndex((prev) => prev - 1);
+  }, [connected, hintMoveIndex, undoLastMove]);
 
-  // Reset progress of the current algorithm sequence
   const handleResetHintProgress = useCallback(() => {
-    setIsAutoAdvancing(false);
-    if (hintMoveIndex > 0) {
-      undoMoves(hintMoveIndex);
-      setHintMoveIndex(0);
-    }
-  }, [hintMoveIndex, undoMoves]);
+    if (connected || hintMoveIndex === 0) return;
+    undoMoves(hintMoveIndex);
+    setHintMoveIndex(0);
+  }, [connected, hintMoveIndex, undoMoves]);
 
-  // Jump to specific index in algorithm ribbon
-  const handleJumpToHintIndex = useCallback((targetIdx: number) => {
-    setIsAutoAdvancing(false);
-    if (!currentHint) return;
-
-    if (targetIdx < hintMoveIndex) {
-      const movesToUndo = hintMoveIndex - targetIdx;
-      undoMoves(movesToUndo);
-      setHintMoveIndex(targetIdx);
-    } else if (targetIdx > hintMoveIndex) {
-      const movesToApply = currentHint.moves.slice(hintMoveIndex, targetIdx);
-      for (const m of movesToApply) {
-        applyMove(m);
+  const handleJumpToHintIndex = useCallback(
+    (targetIdx: number) => {
+      if (connected || !currentHint) return;
+      if (targetIdx < hintMoveIndex) {
+        undoMoves(hintMoveIndex - targetIdx);
+        setHintMoveIndex(targetIdx);
+      } else if (targetIdx > hintMoveIndex) {
+        for (const m of currentHint.moves.slice(hintMoveIndex, targetIdx)) applyMove(m);
+        setHintMoveIndex(targetIdx);
       }
-      setHintMoveIndex(targetIdx);
-    }
-  }, [currentHint, hintMoveIndex, undoMoves, applyMove]);
+    },
+    [connected, currentHint, hintMoveIndex, undoMoves, applyMove]
+  );
 
-  // Auto-advance through the guided walkthrough with a 2-second delay
-  useEffect(() => {
-    if (!isAutoAdvancing) return;
+  // --- Derived UI state ---
+  const phase = livePhase;
+  const isSolved = phase === 'solved';
 
-    if (!currentHint || currentHint.moves.length === 0 || monotonicPhase === 'solved') {
-      setIsAutoAdvancing(false);
-      return;
-    }
-
-    const timer = setInterval(() => {
-      handleExecuteNextMove();
-    }, 2000);
-
-    return () => clearInterval(timer);
-  }, [isAutoAdvancing, currentHint, monotonicPhase, handleExecuteNextMove]);
-
-  // Stage description subtitle
   let stageSubtitle = 'Cross Phase';
-  if (monotonicPhase === 'cross') {
+  if (phase === 'cross') {
     stageSubtitle = 'White Cross — align 4 bottom edges';
-  } else if (monotonicPhase.startsWith('f2l')) {
-    const slotIdx = solvedSlots.length + 1;
-    stageSubtitle = `F2L — slot ${Math.min(slotIdx, 4)} of 4 (${techniqueTier === '2look' ? 'Standard F2L' : 'Rotationless-Preferred'}) · ${notationMode === 'simplified' ? 'Simplified' : 'Standard'}`;
-  } else if (monotonicPhase === 'oll') {
-    stageSubtitle = techniqueTier === 'fullCFOP'
-      ? `Full 1-Look OLL — ${currentHint?.caseName || 'Orient Top Layer'}`
-      : `2-Look OLL — ${currentHint?.caseName || 'Yellow Cross & Corners'}`;
-  } else if (monotonicPhase === 'pll' || monotonicPhase === 'auf') {
-    stageSubtitle = techniqueTier === '2look'
-      ? `2-Look PLL — ${currentHint?.caseName || 'Corners & Edges'}`
-      : `Full 1-Look PLL — ${currentHint?.caseName || 'Permute Last Layer'}`;
-  } else if (monotonicPhase === 'solved') {
+  } else if (phase.startsWith('f2l')) {
+    const slotIdx = liveSolvedSlots.length + 1;
+    stageSubtitle = `F2L — slot ${Math.min(slotIdx, 4)} of 4 (${
+      techniqueTier === '2look' ? 'Standard F2L' : 'Rotationless-Preferred'
+    }) · ${notationMode === 'simplified' ? 'Simplified' : 'Standard'}`;
+  } else if (phase === 'oll') {
+    stageSubtitle =
+      techniqueTier === 'fullCFOP'
+        ? `Full 1-Look OLL — ${currentHint?.caseName || 'Orient Top Layer'}`
+        : `2-Look OLL — ${currentHint?.caseName || 'Yellow Cross & Corners'}`;
+  } else if (phase === 'pll' || phase === 'auf') {
+    stageSubtitle =
+      techniqueTier === '2look'
+        ? `2-Look PLL — ${currentHint?.caseName || 'Corners & Edges'}`
+        : `Full 1-Look PLL — ${currentHint?.caseName || 'Permute Last Layer'}`;
+  } else if (phase === 'solved') {
     stageSubtitle = 'Cube Solved!';
   }
 
-  const isSolved = monotonicPhase === 'solved';
-  const hasValidMoves = currentHint && currentHint.moves.length > 0;
-  const currentExpectedMove = hasValidMoves && hintMoveIndex < currentHint.moves.length ? currentHint.moves[hintMoveIndex] : null;
+  const hasValidMoves = !!currentHint && currentHint.moves.length > 0;
+  const currentExpectedMove = hasValidMoves
+    ? connected
+      ? currentHint!.moves[0]
+      : hintMoveIndex < currentHint!.moves.length
+      ? currentHint!.moves[hintMoveIndex]
+      : null
+    : null;
 
-  // Build the progressive algorithm for the 3D player: scramble moves + all applied moves so far
-  const executedHistoryMoves = moveHistory.map((m) => m.move).join(' ');
-  const progressiveAlg = executedHistoryMoves.trim();
+  const progressiveAlg = moveHistory.map((m) => m.move).join(' ').trim();
   const cubeHeight = isDesktop ? 380 : 215;
+  const setupAlg = connected ? '' : currentScramble ? `${currentScramble} z2` : 'z2';
+  const viewAlg = connected ? visualAlg : progressiveAlg;
+
+  const TIERS: { id: TechniqueTier; label: string }[] = [
+    { id: '2look', label: '2-Look' },
+    { id: 'fullPLL', label: 'Full PLL' },
+    { id: 'fullCFOP', label: 'Full CFOP' },
+  ];
+
+  const tierBar = (
+    <div className="flex items-center gap-1 bg-[var(--surface)] border border-[var(--border)] p-1 rounded-xl">
+      {TIERS.map((t) => (
+        <button
+          key={t.id}
+          onClick={() => handleTierChange(t.id)}
+          className={`flex-1 py-1.5 px-2 rounded-lg text-xs font-heading font-medium transition-all cursor-pointer text-center ${
+            techniqueTier === t.id
+              ? 'bg-[var(--white)] text-[var(--bg)] font-semibold shadow-xs'
+              : 'text-[var(--text-muted)] hover:text-[var(--text)]'
+          }`}
+        >
+          {t.label}
+        </button>
+      ))}
+    </div>
+  );
+
+  const notationBar = (
+    <div className="flex items-center gap-1 bg-[var(--surface)] border border-[var(--border)] p-1 rounded-xl">
+      {(['simplified', 'standard'] as NotationMode[]).map((m) => (
+        <button
+          key={m}
+          onClick={() => handleNotationChange(m)}
+          className={`flex-1 py-1.5 px-2 rounded-lg text-xs font-heading font-medium transition-all cursor-pointer text-center ${
+            notationMode === m
+              ? 'bg-[var(--white)] text-[var(--bg)] font-semibold shadow-xs'
+              : 'text-[var(--text-muted)] hover:text-[var(--text)]'
+          }`}
+        >
+          {m === 'simplified' ? 'Simplified Moves' : 'Standard Notation'}
+        </button>
+      ))}
+    </div>
+  );
 
   return (
     <div className="flex flex-col lg:grid lg:grid-cols-12 lg:gap-8 flex-1 pb-4">
       {/* Mobile Header Bar */}
       <div className="flex lg:hidden items-center justify-between mb-2">
         <div>
-          <h1 className="font-heading font-semibold text-xl tracking-tight text-[var(--text)]">
-            Guided solve
-          </h1>
-          <div className="text-xs text-[var(--text-muted)] font-medium">
-            {stageSubtitle}
-          </div>
+          <h1 className="font-heading font-semibold text-xl tracking-tight text-[var(--text)]">Guided solve</h1>
+          <div className="text-xs text-[var(--text-muted)] font-medium">{stageSubtitle}</div>
         </div>
-
         <button
           onClick={() => fetchHintForCurrentPhase()}
           disabled={isCalculating}
@@ -224,110 +329,44 @@ export const GuidedSolveView: React.FC = () => {
 
       {/* Mobile Settings Bars */}
       <div className="flex lg:hidden flex-col gap-1.5 mb-3">
-        {/* Axis 1: Technique Tier (2-Look | Full PLL | Full CFOP) */}
-        <div className="flex items-center gap-1 bg-[var(--surface)] border border-[var(--border)] p-1 rounded-xl">
-          <button
-            onClick={() => handleTierChange('2look')}
-            className={`flex-1 py-1.5 px-2 rounded-lg text-xs font-heading font-medium transition-all cursor-pointer text-center ${
-              techniqueTier === '2look'
-                ? 'bg-[var(--white)] text-[var(--bg)] font-semibold shadow-xs'
-                : 'text-[var(--text-muted)] hover:text-[var(--text)]'
-            }`}
-          >
-            2-Look
-          </button>
-          <button
-            onClick={() => handleTierChange('fullPLL')}
-            className={`flex-1 py-1.5 px-2 rounded-lg text-xs font-heading font-medium transition-all cursor-pointer text-center ${
-              techniqueTier === 'fullPLL'
-                ? 'bg-[var(--white)] text-[var(--bg)] font-semibold shadow-xs'
-                : 'text-[var(--text-muted)] hover:text-[var(--text)]'
-            }`}
-          >
-            Full PLL
-          </button>
-          <button
-            onClick={() => handleTierChange('fullCFOP')}
-            className={`flex-1 py-1.5 px-2 rounded-lg text-xs font-heading font-medium transition-all cursor-pointer text-center ${
-              techniqueTier === 'fullCFOP'
-                ? 'bg-[var(--white)] text-[var(--bg)] font-semibold shadow-xs'
-                : 'text-[var(--text-muted)] hover:text-[var(--text)]'
-            }`}
-          >
-            Full CFOP
-          </button>
-        </div>
-
-        {/* Axis 2: Notation Mode (Simplified | Standard) */}
-        <div className="flex items-center gap-1 bg-[var(--surface)] border border-[var(--border)] p-1 rounded-xl">
-          <button
-            onClick={() => handleNotationChange('simplified')}
-            className={`flex-1 py-1.5 px-2 rounded-lg text-xs font-heading font-medium transition-all cursor-pointer text-center ${
-              notationMode === 'simplified'
-                ? 'bg-[var(--white)] text-[var(--bg)] font-semibold shadow-xs'
-                : 'text-[var(--text-muted)] hover:text-[var(--text)]'
-            }`}
-          >
-            Simplified Moves
-          </button>
-          <button
-            onClick={() => handleNotationChange('standard')}
-            className={`flex-1 py-1.5 px-2 rounded-lg text-xs font-heading font-medium transition-all cursor-pointer text-center ${
-              notationMode === 'standard'
-                ? 'bg-[var(--white)] text-[var(--bg)] font-semibold shadow-xs'
-                : 'text-[var(--text-muted)] hover:text-[var(--text)]'
-            }`}
-          >
-            Standard Notation
-          </button>
-        </div>
+        {tierBar}
+        {notationBar}
       </div>
 
       {/* LEFT COLUMN: Large 3D Visualizer & PhaseRail */}
       <div className="lg:col-span-5 xl:col-span-5 flex flex-col justify-between mb-3 lg:mb-0 gap-3">
         <div className="bg-[var(--surface)] border border-[var(--border)] rounded-2xl p-3 flex items-center justify-center min-h-[225px] lg:min-h-[420px] lg:flex-1 relative">
-          {isCalculating ? (
+          {isCalculating && !connected ? (
             <div className="flex flex-col items-center justify-center gap-2 text-sm text-[var(--text-muted)] font-heading">
               <RefreshCw className="w-5 h-5 animate-spin text-[var(--white)]" />
               <span>Calculating guidance…</span>
             </div>
           ) : (
-            <TwistyPlayerWrapper
-              setupAlg={currentScramble ? `${currentScramble} z2` : 'z2'}
-              alg={progressiveAlg}
-              tempoScale={2.5}
-              height={cubeHeight}
-            />
+            <TwistyPlayerWrapper setupAlg={setupAlg} alg={viewAlg} tempoScale={2.5} height={cubeHeight} />
           )}
-
-          {/* Floating Phase Badge */}
           <div className="absolute top-3 left-3 px-2.5 py-1 rounded-md bg-[var(--surface-2)]/90 border border-[var(--border)] text-xs font-mono text-[var(--text-muted)] backdrop-blur-xs">
-            {isSolved ? 'Solved' : PHASE_DISPLAY_NAMES[monotonicPhase] || monotonicPhase}
+            {isSolved ? 'Solved' : PHASE_DISPLAY_NAMES[phase] || phase}
           </div>
+          {connected && (
+            <div className="absolute top-3 right-3 px-2 py-1 rounded-md bg-[var(--green)]/10 border border-[var(--green)]/30 text-[11px] font-mono text-[var(--green)]">
+              live cube
+            </div>
+          )}
         </div>
 
-        {/* Color-to-Structure Phase Rail on Desktop situated below 3D cube */}
         <div className="hidden lg:block">
-          <PhaseRail
-            currentPhase={monotonicPhase}
-            solvedSlots={solvedSlots}
-          />
+          <PhaseRail currentPhase={phase} solvedSlots={liveSolvedSlots} />
         </div>
       </div>
 
-      {/* RIGHT COLUMN: Settings, Next Move, Ribbon & Actions */}
+      {/* RIGHT COLUMN */}
       <div className="lg:col-span-7 xl:col-span-7 flex flex-col justify-between">
         {/* Desktop Header */}
         <div className="hidden lg:flex items-center justify-between mb-3 pb-2 border-b border-[var(--border)]/50">
           <div>
-            <h1 className="font-heading font-semibold text-2xl tracking-tight text-[var(--text)]">
-              Guided Solve
-            </h1>
-            <div className="text-xs text-[var(--text-muted)] font-medium mt-0.5">
-              {stageSubtitle}
-            </div>
+            <h1 className="font-heading font-semibold text-2xl tracking-tight text-[var(--text)]">Guided Solve</h1>
+            <div className="text-xs text-[var(--text-muted)] font-medium mt-0.5">{stageSubtitle}</div>
           </div>
-
           <button
             onClick={() => fetchHintForCurrentPhase()}
             disabled={isCalculating}
@@ -340,63 +379,8 @@ export const GuidedSolveView: React.FC = () => {
 
         {/* Desktop Settings Bars */}
         <div className="hidden lg:grid grid-cols-2 gap-2 mb-3">
-          {/* Axis 1: Technique Tier */}
-          <div className="flex items-center gap-1 bg-[var(--surface)] border border-[var(--border)] p-1 rounded-xl">
-            <button
-              onClick={() => handleTierChange('2look')}
-              className={`flex-1 py-1.5 px-2 rounded-lg text-xs font-heading font-medium transition-all cursor-pointer text-center ${
-                techniqueTier === '2look'
-                  ? 'bg-[var(--white)] text-[var(--bg)] font-semibold shadow-xs'
-                  : 'text-[var(--text-muted)] hover:text-[var(--text)]'
-              }`}
-            >
-              2-Look
-            </button>
-            <button
-              onClick={() => handleTierChange('fullPLL')}
-              className={`flex-1 py-1.5 px-2 rounded-lg text-xs font-heading font-medium transition-all cursor-pointer text-center ${
-                techniqueTier === 'fullPLL'
-                  ? 'bg-[var(--white)] text-[var(--bg)] font-semibold shadow-xs'
-                  : 'text-[var(--text-muted)] hover:text-[var(--text)]'
-              }`}
-            >
-              Full PLL
-            </button>
-            <button
-              onClick={() => handleTierChange('fullCFOP')}
-              className={`flex-1 py-1.5 px-2 rounded-lg text-xs font-heading font-medium transition-all cursor-pointer text-center ${
-                techniqueTier === 'fullCFOP'
-                  ? 'bg-[var(--white)] text-[var(--bg)] font-semibold shadow-xs'
-                  : 'text-[var(--text-muted)] hover:text-[var(--text)]'
-              }`}
-            >
-              Full CFOP
-            </button>
-          </div>
-
-          {/* Axis 2: Notation Mode */}
-          <div className="flex items-center gap-1 bg-[var(--surface)] border border-[var(--border)] p-1 rounded-xl">
-            <button
-              onClick={() => handleNotationChange('simplified')}
-              className={`flex-1 py-1.5 px-2 rounded-lg text-xs font-heading font-medium transition-all cursor-pointer text-center ${
-                notationMode === 'simplified'
-                  ? 'bg-[var(--white)] text-[var(--bg)] font-semibold shadow-xs'
-                  : 'text-[var(--text-muted)] hover:text-[var(--text)]'
-              }`}
-            >
-              Simplified Moves
-            </button>
-            <button
-              onClick={() => handleNotationChange('standard')}
-              className={`flex-1 py-1.5 px-2 rounded-lg text-xs font-heading font-medium transition-all cursor-pointer text-center ${
-                notationMode === 'standard'
-                  ? 'bg-[var(--white)] text-[var(--bg)] font-semibold shadow-xs'
-                  : 'text-[var(--text-muted)] hover:text-[var(--text)]'
-              }`}
-            >
-              Standard Notation
-            </button>
-          </div>
+          {tierBar}
+          {notationBar}
         </div>
 
         {/* Next Move Callout Card & Controls */}
@@ -406,15 +390,15 @@ export const GuidedSolveView: React.FC = () => {
               {isSolved
                 ? 'Status'
                 : hasValidMoves
-                ? `Next Move (${hintMoveIndex + 1} of ${currentHint.moves.length}) · ${currentHint.caseName}`
+                ? connected
+                  ? `Next Move · ${currentHint!.caseName}`
+                  : `Next Move (${hintMoveIndex + 1} of ${currentHint!.moves.length}) · ${currentHint!.caseName}`
                 : 'Guidance Status'}
             </div>
-
-            {/* Auto-advance status badge */}
-            {isAutoAdvancing && (
+            {connected && (
               <span className="inline-flex items-center gap-1.5 text-[11px] font-mono text-[var(--green)] bg-[var(--green)]/10 border border-[var(--green)]/30 px-2 py-0.5 rounded-full">
-                <span className="w-1.5 h-1.5 rounded-full bg-[var(--green)] animate-ping" />
-                <span>Auto 2s</span>
+                <span className="w-1.5 h-1.5 rounded-full bg-[var(--green)] animate-pulse" />
+                <span>tracking turns</span>
               </span>
             )}
           </div>
@@ -437,7 +421,7 @@ export const GuidedSolveView: React.FC = () => {
                   {getMoveDescription(currentExpectedMove)}
                 </div>
                 <div className="text-[11px] text-[var(--text-muted)] mt-0.5">
-                  Execute on physical cube, or tap Next move below
+                  {connected ? 'Turn your cube — the guide follows every move' : 'Execute on physical cube, or tap Next move below'}
                 </div>
               </div>
             </div>
@@ -447,63 +431,34 @@ export const GuidedSolveView: React.FC = () => {
             </div>
           )}
 
-          {/* Stepping & Auto-Play Toolbar */}
-          {!isSolved && hasValidMoves && (
-            <div className="flex items-center justify-between gap-2 mt-3 pt-3 border-t border-[var(--border)]/60">
+          {/* Manual stepping toolbar — no-cube only */}
+          {!connected && !isSolved && hasValidMoves && (
+            <div className="flex items-center justify-end gap-1.5 mt-3 pt-3 border-t border-[var(--border)]/60">
               <button
-                onClick={() => setIsAutoAdvancing((prev) => !prev)}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-heading font-medium transition-all cursor-pointer ${
-                  isAutoAdvancing
-                    ? 'bg-[var(--green)] text-black font-semibold shadow-xs'
-                    : 'bg-[var(--surface-2)] text-[var(--text)] hover:bg-[var(--border)]'
-                }`}
-                title={isAutoAdvancing ? 'Pause auto-walkthrough' : 'Auto-play walkthrough with 2s delay per move'}
+                onClick={handleStepBackMove}
+                disabled={hintMoveIndex === 0}
+                title="Previous move in hint"
+                className="p-2 rounded-xl bg-[var(--surface-2)] text-[var(--text)] hover:bg-[var(--border)] disabled:opacity-30 disabled:cursor-not-allowed transition-colors cursor-pointer"
               >
-                {isAutoAdvancing ? (
-                  <>
-                    <Pause className="w-3.5 h-3.5 fill-current" />
-                    <span>Pause (2s)</span>
-                  </>
-                ) : (
-                  <>
-                    <Play className="w-3.5 h-3.5 fill-current" />
-                    <span>Auto (2s)</span>
-                  </>
-                )}
+                <ChevronLeft className="w-4 h-4" />
               </button>
-
-              <div className="flex items-center gap-1.5 ml-auto">
-                <button
-                  onClick={handleStepBackMove}
-                  disabled={hintMoveIndex === 0}
-                  title="Previous move in hint"
-                  className="p-2 rounded-xl bg-[var(--surface-2)] text-[var(--text)] hover:bg-[var(--border)] disabled:opacity-30 disabled:cursor-not-allowed transition-colors cursor-pointer"
-                >
-                  <ChevronLeft className="w-4 h-4" />
-                </button>
-
-                <button
-                  onClick={() => {
-                    setIsAutoAdvancing(false);
-                    handleExecuteNextMove();
-                  }}
-                  disabled={hintMoveIndex >= currentHint.moves.length}
-                  title="Advance move"
-                  className="flex items-center gap-1 px-3 py-2 rounded-xl bg-[var(--white)] text-[var(--bg)] font-heading font-semibold text-xs hover:opacity-90 disabled:opacity-30 disabled:cursor-not-allowed transition-all cursor-pointer shadow-xs"
-                >
-                  <span>Step</span>
-                  <ChevronRight className="w-3.5 h-3.5" />
-                </button>
-
-                <button
-                  onClick={handleResetHintProgress}
-                  disabled={hintMoveIndex === 0}
-                  title="Reset current hint progress"
-                  className="p-2 rounded-xl bg-[var(--surface-2)] text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--border)] disabled:opacity-30 disabled:cursor-not-allowed transition-colors cursor-pointer"
-                >
-                  <RotateCcw className="w-4 h-4" />
-                </button>
-              </div>
+              <button
+                onClick={handleExecuteNextMove}
+                disabled={hintMoveIndex >= currentHint!.moves.length}
+                title="Advance move"
+                className="flex items-center gap-1 px-3 py-2 rounded-xl bg-[var(--white)] text-[var(--bg)] font-heading font-semibold text-xs hover:opacity-90 disabled:opacity-30 disabled:cursor-not-allowed transition-all cursor-pointer shadow-xs"
+              >
+                <span>Step</span>
+                <ChevronRight className="w-3.5 h-3.5" />
+              </button>
+              <button
+                onClick={handleResetHintProgress}
+                disabled={hintMoveIndex === 0}
+                title="Reset current hint progress"
+                className="p-2 rounded-xl bg-[var(--surface-2)] text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--border)] disabled:opacity-30 disabled:cursor-not-allowed transition-colors cursor-pointer"
+              >
+                <RotateCcw className="w-4 h-4" />
+              </button>
             </div>
           )}
         </div>
@@ -517,14 +472,14 @@ export const GuidedSolveView: React.FC = () => {
               </div>
               <div className="font-mono text-sm font-medium leading-relaxed tracking-wide flex flex-wrap gap-1.5 justify-center py-1">
                 {currentHint.moves.map((m, idx) => {
-                  const isDone = idx < hintMoveIndex;
-                  const isCurrent = idx === hintMoveIndex;
-
+                  const isDone = !connected && idx < hintMoveIndex;
+                  const isCurrent = connected ? idx === 0 : idx === hintMoveIndex;
                   return (
                     <button
                       key={idx}
                       onClick={() => handleJumpToHintIndex(idx)}
-                      className={`px-2 py-1 rounded-md text-xs font-mono transition-all cursor-pointer ${
+                      disabled={connected}
+                      className={`px-2 py-1 rounded-md text-xs font-mono transition-all ${connected ? '' : 'cursor-pointer'} ${
                         isDone
                           ? 'text-[var(--text-muted)] opacity-40 line-through bg-transparent'
                           : isCurrent
@@ -540,9 +495,7 @@ export const GuidedSolveView: React.FC = () => {
             </div>
           ) : (
             <div className="text-center my-2 py-2">
-              <div className="text-xs uppercase tracking-wider text-[var(--text-muted)] font-medium mb-1">
-                Phase status
-              </div>
+              <div className="text-xs uppercase tracking-wider text-[var(--text-muted)] font-medium mb-1">Phase status</div>
               <div className="font-mono text-xl text-[var(--green)]">
                 {isSolved ? 'Cube is Solved!' : 'Ready for next phase'}
               </div>
@@ -550,12 +503,9 @@ export const GuidedSolveView: React.FC = () => {
           )}
         </div>
 
-        {/* Mobile Color-to-Structure Phase Rail */}
+        {/* Mobile Phase Rail */}
         <div className="block lg:hidden mb-3">
-          <PhaseRail
-            currentPhase={monotonicPhase}
-            solvedSlots={solvedSlots}
-          />
+          <PhaseRail currentPhase={phase} solvedSlots={liveSolvedSlots} />
         </div>
 
         {/* Bottom Action CTAs */}
@@ -568,13 +518,14 @@ export const GuidedSolveView: React.FC = () => {
               <RefreshCw className="w-4 h-4" />
               <span>Start New Scramble</span>
             </button>
+          ) : connected ? (
+            <div className="flex-1 py-3 rounded-xl text-center text-[13px] text-[var(--text-muted)] bg-[var(--surface)] border border-[var(--border)]">
+              Turn your cube to follow the guide. Use the header resync if the picture drifts.
+            </div>
           ) : (
             <button
-              onClick={() => {
-                setIsAutoAdvancing(false);
-                handleExecuteNextMove();
-              }}
-              disabled={!hasValidMoves || hintMoveIndex >= currentHint.moves.length || isCalculating}
+              onClick={handleExecuteNextMove}
+              disabled={!hasValidMoves || hintMoveIndex >= currentHint!.moves.length || isCalculating}
               className="flex-1 py-3.5 rounded-xl font-heading font-semibold text-[15px] bg-[var(--white)] text-[var(--bg)] hover:opacity-90 active:scale-[0.99] transition-all flex items-center justify-center gap-2 cursor-pointer shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
             >
               <ArrowRight className="w-4 h-4" />
@@ -588,11 +539,10 @@ export const GuidedSolveView: React.FC = () => {
             className="flex-1 py-3 rounded-xl font-heading font-medium text-[13px] bg-transparent border border-[var(--border)] text-[var(--text)] hover:bg-[var(--surface)] active:scale-[0.99] transition-all flex items-center justify-center gap-2 cursor-pointer"
           >
             <RotateCw className="w-3.5 h-3.5" />
-            <span>Resync / Recalculate</span>
+            <span>Recalculate</span>
           </button>
         </div>
       </div>
     </div>
   );
 };
-

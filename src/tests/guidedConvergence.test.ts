@@ -135,6 +135,40 @@ describe('Guided solve converges for every scramble / tier / notation', () => {
     }
   }
 
+  it('connected-cube path: hint read from `physicalPattern · z2` converges', async () => {
+    // The rewritten GuidedSolveView feeds `findHint` the live cube via
+    // `physicalPattern.applyAlg('z2')`. `physicalPattern` is the raw smart-cube frame
+    // (`defaultPattern · physical turns`); this loop mirrors that bridge exactly.
+    const { relabelMoveZ2 } = await import('../utils/kpuzzleHelper');
+    const rand = mulberry32(0xBADCAB);
+    for (let i = 0; i < 8; i++) {
+      const scr = scramble(rand);
+      let physical = kpuzzle.defaultPattern().applyAlg(new Alg(scr)); // raw frame
+      let solved = false;
+      for (let step = 0; step < 80 && !solved; step++) {
+        const hintPattern = physical.applyAlg(new Alg('z2')); // -> post-z2, what findHint reads
+        const status = evaluateCFOPFromPattern(hintPattern);
+        if (status.isFullySolved) {
+          solved = true;
+          break;
+        }
+        const phase = status.currentPhase === 'solved' ? 'pll' : status.currentPhase;
+        const activeSlot = ALL_F2L_SLOTS.find((s) => !status.solvedSlots.includes(s));
+        const hint = await findHint(
+          matcher,
+          hintPattern,
+          { phase, activeSlot, techniqueTier: '2look', notationMode: 'simplified' },
+          false
+        );
+        expect(hint.moves.length, `scramble "${scr}" empty hint in ${phase}`).toBeGreaterThan(0);
+        // The smart cube reports turns in its calibrated (raw) frame — relabel each
+        // post-z2 hint move back before advancing the physical model.
+        for (const m of hint.moves) physical = physical.applyAlg(new Alg(relabelMoveZ2(m)));
+      }
+      expect(solved, `scramble "${scr}" did not converge via the connected frame`).toBe(true);
+    }
+  }, 60_000);
+
   it('the guaranteed fallback alone (no matchers) still solves every scramble', async () => {
     const rand = mulberry32(0x5A17);
     for (let i = 0; i < 8; i++) {

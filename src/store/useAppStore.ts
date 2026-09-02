@@ -29,8 +29,6 @@ interface AppStoreState {
   isProfileModalOpen: boolean;
   techniqueTier: TechniqueTier;
   notationMode: NotationMode;
-  guidanceTier: TechniqueTier;
-  guidanceMethod: TechniqueTier;
 
   /** Training mode: which CFOP phase is being drilled. */
   trainingSubMode: TrainingPhase;
@@ -67,8 +65,6 @@ interface AppStoreState {
   setIsProfileModalOpen: (open: boolean) => void;
   setTechniqueTier: (tier: TechniqueTier) => void;
   setNotationMode: (mode: NotationMode) => void;
-  setGuidanceTier: (tier: TechniqueTier) => void;
-  setGuidanceMethod: (method: TechniqueTier) => void;
 }
 
 export const useAppStore = create<AppStoreState>((set) => ({
@@ -85,8 +81,6 @@ export const useAppStore = create<AppStoreState>((set) => ({
   isProfileModalOpen: false,
   techniqueTier: '2look',
   notationMode: 'simplified',
-  guidanceTier: '2look',
-  guidanceMethod: '2look',
   trainingSubMode: 'OLL',
   trainingMethod: 'full',
   trainingCaseFilter: null,
@@ -184,8 +178,6 @@ export const useAppStore = create<AppStoreState>((set) => ({
     })),
   resetTrainingStats: () => set({ trainingStats: { attempts: 0, solved: 0, streak: 0 } }),
   setIsProfileModalOpen: (isProfileModalOpen) => set({ isProfileModalOpen }),
-  setTechniqueTier: (techniqueTier) => set({ techniqueTier, guidanceTier: techniqueTier, guidanceMethod: techniqueTier }),
+  setTechniqueTier: (techniqueTier) => set({ techniqueTier }),
   setNotationMode: (notationMode) => set({ notationMode }),
-  setGuidanceTier: (guidanceTier) => set({ techniqueTier: guidanceTier, guidanceTier, guidanceMethod: guidanceTier }),
-  setGuidanceMethod: (guidanceMethod) => set({ techniqueTier: guidanceMethod, guidanceTier: guidanceMethod, guidanceMethod }),
 }));

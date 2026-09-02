@@ -39,9 +39,9 @@ export async function findHint(
   let phase = q.phase;
   const tier = q.techniqueTier || q.tier || '2look';
   const notationMode = (q.notationMode || 'simplified') as NotationMode;
-  const preferRotationless = tier === 'fullPLL' || tier === 'fullCFOP' || tier === 'confident';
+  const preferRotationless = tier === 'fullPLL' || tier === 'fullCFOP';
   const is1LookOLL = tier === 'fullCFOP';
-  const is1LookPLL = tier === 'fullPLL' || tier === 'fullCFOP' || tier === 'confident';
+  const is1LookPLL = tier === 'fullPLL' || tier === 'fullCFOP';
   const cm = forceFallback ? null : caseMatcher;
 
   // 1. Cross

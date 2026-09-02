@@ -18,8 +18,6 @@ export type AppMode = 'scramble' | 'timed' | 'guided' | 'training' | 'history';
 
 export type TechniqueTier = '2look' | 'fullPLL' | 'fullCFOP';
 export type NotationMode = 'simplified' | 'standard';
-export type GuidanceTier = TechniqueTier;
-export type GuidanceMethod = TechniqueTier;
 
 
 
