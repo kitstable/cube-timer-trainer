@@ -7,6 +7,8 @@ import { useCubeStore } from '../../store/useCubeStore';
 import { useAppStore } from '../../store/useAppStore';
 import { useSolverWorker } from '../../hooks/useSolverWorker';
 import { evaluateCFOPFromPattern } from '../../utils/phaseDetector';
+import { classifyScrambleMove } from '../../utils/scrambleTracker';
+import { relabelMoveZ2 } from '../../utils/kpuzzleHelper';
 import { saveSolve } from '../../db/repository';
 import { PHASE_DISPLAY_NAMES, ALL_F2L_SLOTS, getMoveDescription } from '../../utils/constants';
 import type { CFOPPhase, F2LSlotId, MoveHint, TechniqueTier, NotationMode } from '../../types/cube';
@@ -15,10 +17,13 @@ import { useIsDesktop } from '../../hooks/useMediaQuery';
 /**
  * Guided Solve — a CFOP teaching walkthrough.
  *
- * With a smart cube connected this follows `cube-trainer-spec.md` §5 strictly: the hint is
- * disposable, recomputed from the *live* physical `KPattern` after every real move. There is
- * no fabricated scramble, no independent progress state, and no "was that the expected move"
- * branching — a turn just triggers "recompute the hint from the current real state".
+ * With a smart cube connected the hint is computed from the *live* physical `KPattern`
+ * (`physicalPattern · z2`) — no fabricated scramble, no independent state. It then walks you
+ * through that hint one move at a time: each correct physical turn ticks the next move off
+ * (via the same pure `classifyScrambleMove` tracker the Scramble guide uses, so half-turns,
+ * commuting moves etc. are handled). A wrong/unexpected turn, or finishing the current step,
+ * recomputes a fresh hint from the real state — so the guide is always correct without
+ * fragile "undo the mistake" logic, but it doesn't churn a new alg on every single turn.
  *
  * Without a cube it's the manual practice path: seed from the Scramble-tab scramble (or make
  * one), and step through the hint with the Next-move button / ribbon (virtual `applyMove`).
@@ -54,6 +59,17 @@ export const GuidedSolveView: React.FC = () => {
   const solveStartRef = useRef<{ ts: number; moveCount: number } | null>(null);
   const solveSavedRef = useRef<boolean>(false);
 
+  // Connected: live progress through the current hint. `planRemaining` / `planDone` are in
+  // the raw smart-cube move frame (what you physically turn); the refs mirror them for the
+  // move-consuming effect. `consumedMovesRef` marks how far into `moveHistory` we've read.
+  const [planRemaining, setPlanRemaining] = useState<string[]>([]);
+  const [planDone, setPlanDone] = useState<string[]>([]);
+  const planRawRef = useRef<string[]>([]);
+  const planDoneRef = useRef<string[]>([]);
+  const planCorrectionRef = useRef<boolean>(false);
+  const consumedMovesRef = useRef<number>(0);
+  const recomputingRef = useRef<boolean>(false);
+
   /** The pattern the hint engine should read, always in the app's post-z2 frame. */
   const getHintPattern = useCallback(() => {
     const st = useCubeStore.getState();
@@ -76,25 +92,36 @@ export const GuidedSolveView: React.FC = () => {
       const activeTier = tierOverride || techniqueTier;
       const activeNotation = notationOverride || notationMode;
       setIsCalculating(true);
+      recomputingRef.current = true;
       try {
         const nextUnsolvedSlot = ALL_F2L_SLOTS.find((s) => !status.solvedSlots.includes(s));
         const res = await findHint(phase, hintPattern.patternData, nextUnsolvedSlot, activeTier, activeNotation);
         if (res) {
           const hintPhase = (res.phase || phase) as CFOPPhase;
+          const moves = res.moves || [];
           setCurrentHint({
             phase: hintPhase,
             phaseName: (PHASE_DISPLAY_NAMES as Record<string, string>)[hintPhase] || hintPhase,
-            moves: res.moves || [],
+            moves,
             currentIndex: 0,
             caseName: res.caseName || 'Guidance',
-            rawAlg: (res.moves || []).join(' '),
+            rawAlg: moves.join(' '),
           });
           setHintMoveIndex(0);
+          // Seed live walkthrough tracking against this hint (raw smart-cube frame).
+          const raw = moves.map(relabelMoveZ2);
+          planRawRef.current = raw;
+          planDoneRef.current = [];
+          planCorrectionRef.current = false;
+          setPlanRemaining(raw);
+          setPlanDone([]);
+          consumedMovesRef.current = useCubeStore.getState().moveHistory.length;
         }
       } catch (err) {
         console.warn('Failed to calculate guidance hint:', err);
       } finally {
         setIsCalculating(false);
+        recomputingRef.current = false;
       }
     },
     [getHintPattern, isReady, findHint, techniqueTier, notationMode]
@@ -133,11 +160,34 @@ export const GuidedSolveView: React.FC = () => {
     if (isReady && !connected && pattern && !currentHint) fetchHintForCurrentPhase();
   }, [isReady, connected, pattern, currentHint, fetchHintForCurrentPhase]);
 
-  // Connected: every real physical turn advances `physicalPattern` — recompute the hint
-  // from scratch, per cube-trainer-spec.md §5. No "was that the expected move" logic.
+  // Connected: consume new physical turns and walk through the current hint. Each turn that
+  // matches the plan ticks a move off; a wrong turn — or finishing the plan — recomputes a
+  // fresh hint from the real state. `classifyScrambleMove` (pure) handles half-turns,
+  // commuting moves and corrections, exactly as the Scramble guide does.
   useEffect(() => {
-    if (!connected || !isReady) return;
-    fetchHintForCurrentPhase();
+    if (!connected || !isReady || recomputingRef.current) return;
+    const hist = useCubeStore.getState().moveHistory;
+    if (hist.length <= consumedMovesRef.current) return;
+    const fresh = hist.slice(consumedMovesRef.current).map((m) => m.move);
+    consumedMovesRef.current = hist.length;
+
+    if (planRawRef.current.length === 0) {
+      fetchHintForCurrentPhase();
+      return;
+    }
+
+    for (const mv of fresh) {
+      const cls = classifyScrambleMove(planRawRef.current, planDoneRef.current, mv, planCorrectionRef.current);
+      if (cls.kind === 'ignored') continue;
+      if (cls.kind === 'complete' || cls.kind === 'error') {
+        fetchHintForCurrentPhase();
+        return;
+      }
+      planDoneRef.current = cls.nextDone;
+      planCorrectionRef.current = cls.correctionActive;
+      setPlanRemaining(cls.nextRemaining);
+      setPlanDone(cls.nextDone);
+    }
   }, [connected, isReady, physicalPattern, fetchHintForCurrentPhase]);
 
   // Connected: track solve timing and save a `mode: 'guided'` Solve when the cube is solved.
@@ -253,13 +303,14 @@ export const GuidedSolveView: React.FC = () => {
     stageSubtitle = 'Cube Solved!';
   }
 
-  const hasValidMoves = !!currentHint && currentHint.moves.length > 0;
-  const currentExpectedMove = hasValidMoves
-    ? connected
-      ? currentHint!.moves[0]
-      : hintMoveIndex < currentHint!.moves.length
-      ? currentHint!.moves[hintMoveIndex]
-      : null
+  // Connected walks through `planRemaining` (raw frame); no-cube steps `currentHint.moves`.
+  const hasValidMoves = connected
+    ? planRemaining.length > 0
+    : !!currentHint && currentHint.moves.length > 0;
+  const currentExpectedMove = connected
+    ? planRemaining[0] ?? null
+    : hasValidMoves && hintMoveIndex < currentHint!.moves.length
+    ? currentHint!.moves[hintMoveIndex]
     : null;
 
   const progressiveAlg = moveHistory.map((m) => m.move).join(' ').trim();
@@ -391,7 +442,9 @@ export const GuidedSolveView: React.FC = () => {
                 ? 'Status'
                 : hasValidMoves
                 ? connected
-                  ? `Next Move · ${currentHint!.caseName}`
+                  ? `Next Move (${planDone.length + 1} of ${planDone.length + planRemaining.length})${
+                      currentHint?.caseName ? ` · ${currentHint.caseName}` : ''
+                    }`
                   : `Next Move (${hintMoveIndex + 1} of ${currentHint!.moves.length}) · ${currentHint!.caseName}`
                 : 'Guidance Status'}
             </div>
@@ -465,29 +518,33 @@ export const GuidedSolveView: React.FC = () => {
 
         {/* Hint Move Ribbon */}
         <div className="mb-3">
-          {currentHint && currentHint.moves.length > 0 ? (
+          {(connected ? planDone.length + planRemaining.length > 0 : currentHint && currentHint.moves.length > 0) ? (
             <div className="bg-[var(--surface)] border border-[var(--border)] rounded-2xl p-3.5 lg:p-4">
               <div className="text-[11px] uppercase tracking-wider text-[var(--text-muted)] font-medium mb-2 text-center">
-                {currentHint.caseName ? `${currentHint.caseName} Algorithm` : 'Algorithm Sequence'}
+                {currentHint?.caseName ? `${currentHint.caseName} Algorithm` : 'Algorithm Sequence'}
               </div>
               <div className="font-mono text-sm font-medium leading-relaxed tracking-wide flex flex-wrap gap-1.5 justify-center py-1">
-                {currentHint.moves.map((m, idx) => {
-                  const isDone = !connected && idx < hintMoveIndex;
-                  const isCurrent = connected ? idx === 0 : idx === hintMoveIndex;
+                {(connected
+                  ? [...planDone.map((m) => ({ m, done: true })), ...planRemaining.map((m) => ({ m, done: false }))]
+                  : currentHint!.moves.map((m, idx) => ({ m, done: idx < hintMoveIndex }))
+                ).map((entry, idx, arr) => {
+                  const isCurrent = connected
+                    ? !entry.done && (idx === 0 || arr[idx - 1].done)
+                    : idx === hintMoveIndex;
                   return (
                     <button
                       key={idx}
-                      onClick={() => handleJumpToHintIndex(idx)}
+                      onClick={() => !connected && handleJumpToHintIndex(idx)}
                       disabled={connected}
                       className={`px-2 py-1 rounded-md text-xs font-mono transition-all ${connected ? '' : 'cursor-pointer'} ${
-                        isDone
+                        entry.done
                           ? 'text-[var(--text-muted)] opacity-40 line-through bg-transparent'
                           : isCurrent
                           ? 'bg-[var(--white)] text-[var(--bg)] font-bold shadow-xs scale-105 ring-2 ring-[var(--white)]/30'
                           : 'text-[var(--text)] bg-[var(--surface-2)] hover:bg-[var(--border)]'
                       }`}
                     >
-                      {m}
+                      {entry.m}
                     </button>
                   );
                 })}

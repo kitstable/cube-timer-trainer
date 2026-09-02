@@ -169,6 +169,49 @@ describe('Guided solve converges for every scramble / tier / notation', () => {
     }
   }, 60_000);
 
+  it('connected walkthrough: physical turns tick through the hint, then complete', async () => {
+    // The rewritten connected Guided view feeds each hint (relabelled to the raw frame) into
+    // `classifyScrambleMove` and advances a move at a time; a `complete` recomputes the next.
+    const { relabelMoveZ2 } = await import('../utils/kpuzzleHelper');
+    const { classifyScrambleMove } = await import('../utils/scrambleTracker');
+    const rand = mulberry32(0xF01);
+    for (let i = 0; i < 6; i++) {
+      const scr = scramble(rand);
+      let physical = kpuzzle.defaultPattern().applyAlg(new Alg(scr));
+      let steps = 0;
+      let solved = false;
+      for (let phaseIter = 0; phaseIter < 20 && !solved; phaseIter++) {
+        const hp = physical.applyAlg(new Alg('z2'));
+        const status = evaluateCFOPFromPattern(hp);
+        if (status.isFullySolved) {
+          solved = true;
+          break;
+        }
+        const phase = status.currentPhase === 'solved' ? 'pll' : status.currentPhase;
+        const slot = ALL_F2L_SLOTS.find((s) => !status.solvedSlots.includes(s));
+        const hint = await findHint(matcher, hp, { phase, activeSlot: slot, techniqueTier: '2look', notationMode: 'simplified' }, false);
+        const plan = hint.moves.map(relabelMoveZ2);
+        expect(plan.length, `${scr}: empty hint in ${phase}`).toBeGreaterThan(0);
+
+        const done: string[] = [];
+        let correction = false;
+        for (const mv of plan) {
+          const cls = classifyScrambleMove(plan, done, mv, correction);
+          steps++;
+          // Executing the plan verbatim must never read as a wrong turn.
+          expect(cls.kind, `${scr}: ${phase} plan move ${mv} classified ${cls.kind}`).not.toBe('error');
+          done.splice(0, done.length, ...cls.nextDone);
+          correction = cls.correctionActive;
+          physical = physical.applyAlg(new Alg(mv)); // `mv` is already in the raw frame
+        }
+        // After the whole plan, the tracker should have said `complete` on the last move.
+        const last = classifyScrambleMove(plan, plan.slice(0, -1), plan[plan.length - 1], false);
+        expect(last.kind, `${scr}: ${phase} plan did not complete`).toBe('complete');
+      }
+      expect(solved, `${scr}: walkthrough did not reach solved (steps=${steps})`).toBe(true);
+    }
+  }, 60_000);
+
   it('the guaranteed fallback alone (no matchers) still solves every scramble', async () => {
     const rand = mulberry32(0x5A17);
     for (let i = 0; i < 8; i++) {

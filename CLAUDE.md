@@ -292,15 +292,24 @@ Solve rewrite (spec §8) is still pending.
 view that didn't — the old mount effect fabricated an *unrelated* scramble and never read the
 live cube).
 
-- **Connected:** the hint is disposable, recomputed from the live physical `KPattern` after
-  every real turn. `getHintPattern()` returns `physicalPattern.applyAlg('z2')` (raw smart-cube
-  frame → post-z2, the frame `findHint` / `evaluateCFOPFromPattern` expect); a `useEffect` on
-  `physicalPattern` re-runs `fetchHintForCurrentPhase` on every move. **No "was that the
-  expected move" branching** — a turn just triggers a fresh recompute. Phase / solved-slots for
-  the UI come from `evaluateCFOPFromPattern(hintPattern)`, not `useCubeStore.monotonicPhase`
-  (which is raw-frame and wrong here). Manual stepping (Next-move / ribbon-tap `applyMove`) is
-  hidden when connected. The 3D view uses `visualAlg` (like Scramble/Timed). A stale
-  "assumed-solved" first read is resolved by the existing header resync button.
+- **Connected:** `getHintPattern()` returns `physicalPattern.applyAlg('z2')` (raw smart-cube
+  frame → post-z2, the frame `findHint` / `evaluateCFOPFromPattern` expect). The hint is
+  computed from that live pattern, then the view **walks you through it a move at a time**:
+  each new physical turn (read from `moveHistory` deltas) is fed — relabelled to the raw frame
+  via `relabelMoveZ2` — into the pure `classifyScrambleMove` tracker (`planRemaining` /
+  `planDone`, same tracker the Scramble guide uses, so half-turns / commuting moves / doubles
+  are handled). A `complete` or `error` classification (finished the step, or an unexpected
+  turn) triggers `fetchHintForCurrentPhase()` — a fresh hint from the real state. So it's
+  self-correcting without "undo the mistake" logic, but it does **not** churn a brand-new alg
+  on every single turn (an earlier version did — recomputing the optimal cross on each face
+  turn felt like it wasn't guiding at all).
+  - `recomputingRef` guards the move-consuming effect while a fetch is in flight;
+    `consumedMovesRef` marks how far into `moveHistory` has been read.
+  - Phase / solved-slots for the UI come from `evaluateCFOPFromPattern(hintPattern)` inside
+    `fetchHintForCurrentPhase` (updated at step boundaries), not `useCubeStore.monotonicPhase`
+    (raw-frame, wrong here). Manual stepping is hidden when connected; the ribbon shows
+    `planDone` (struck) + `planRemaining`. The 3D view uses `visualAlg`. A stale
+    "assumed-solved" first read is resolved by the existing header resync button.
 - **No cube:** unchanged manual practice path — seed from the Scramble-tab `currentScramble`
   or generate one, step the hint with Next-move / ribbon. (Generating a scramble here is fine —
   it's explicit and there's no live cube to disconnect from; the bug was fabricating one *while
@@ -317,9 +326,11 @@ live cube).
   removed; `findHint.ts`'s dead `tier === 'confident'` branches removed; unused
   `src/components/ui/MoveRibbon.tsx` deleted.
 - Tests: `src/tests/guidedConvergence.test.ts` still green (3 tiers × 2 notations × 12
-  scrambles), plus a new "connected-cube path" case that drives the exact
-  `physicalPattern · z2` → `findHint` → relabel-back loop and asserts convergence. Connected
-  Guided against real hardware is still unverified (no BLE in this env).
+  scrambles), plus a "connected-cube path" case (drives the `physicalPattern · z2` → `findHint`
+  → relabel-back loop to convergence) and a "connected walkthrough" case (executing each
+  phase's hint verbatim never reads as a wrong turn, each plan reports `complete` on its last
+  move, and it reaches solved). Connected Guided *was* verified against real hardware by the
+  user — the "recomputes on every turn instead of guiding" fix above came from that testing.
 
 ## Where the code stands relative to the spec — open items to discuss
 
