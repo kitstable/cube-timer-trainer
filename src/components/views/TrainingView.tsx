@@ -12,6 +12,8 @@ import {
   applyAlgToPattern,
   relabelMoveZ2,
   isPatternSolved,
+  toZ2DisplayAlg,
+  isAllFaceTurns,
 } from '../../utils/kpuzzleHelper';
 import {
   isOLLSolved,
@@ -105,6 +107,7 @@ export const TrainingView: React.FC = () => {
     trackDoneMoves,
     trackFeedback,
     currentProfileId,
+    connectedYellowUp,
   } = useAppStore();
   const { smartCube, visualAlg, physicalPattern } = useCubeStore();
   const { generateTrainingScramble, generateScramble, solveCross, findHint, isReady } = useSolverWorker();
@@ -432,17 +435,34 @@ export const TrainingView: React.FC = () => {
 
   // --- 3D view alg ---
   const { setupAlg, viewAlg } = useMemo(() => {
-    // Connected: mirror the cube exactly as its sensor reports it (raw `visualAlg`). No-cube:
-    // OLL/PLL/F2L reps render last-layer-up (`z2` setup + post-z2 move stream from the matcher);
-    // the Cross drill (`frame: 'raw'`) renders white-up so the cross forms on top.
-    if (connected) return { setupAlg: '', viewAlg: visualAlg };
+    // Connected: default is to mirror the cube exactly as its sensor reports it (raw `visualAlg`).
+    // With `connectedYellowUp` on, render yellow-face-up (`z2` setup + `toZ2DisplayAlg(visualAlg)`)
+    // — except the Cross drill (`frame: 'raw'`), which stays white-up so the cross forms on top,
+    // and except when `visualAlg` isn't all face turns (a reconstructed rotated frame — fall back
+    // to raw rather than mis-relabel a rotation token).
+    // No-cube: OLL/PLL/F2L reps render last-layer-up (`z2` setup + post-z2 move stream from the
+    // matcher); the Cross drill renders white-up. Untouched.
+    if (connected) {
+      const rawFrame = (rep?.frame ?? config?.frame) === 'raw';
+      const yellowUp = connectedYellowUp && !rawFrame && isAllFaceTurns(visualAlg);
+      return yellowUp
+        ? { setupAlg: 'z2', viewAlg: toZ2DisplayAlg(visualAlg) }
+        : { setupAlg: '', viewAlg: visualAlg };
+    }
     const su = rep?.frame === 'raw' ? '' : 'z2';
     if (!rep) return { setupAlg: 'z2', viewAlg: '' };
     if (stage === 'scramble') return { setupAlg: su, viewAlg: rep.scrambleView.slice(0, stepIdx).join(' ') };
     return { setupAlg: su, viewAlg: [...rep.scrambleView, ...attemptActions].join(' ') };
-  }, [connected, visualAlg, rep, stage, stepIdx, attemptActions]);
+  }, [connected, visualAlg, rep, config?.frame, connectedYellowUp, stage, stepIdx, attemptActions]);
 
   const feedbackKind = trackFeedback?.kind ?? null;
+  // Connected setup-scramble ribbon: the physical tracker (`useSmartCube` → `trackTargetMoves`)
+  // stays in the raw white-up frame, but with the yellow-up 3D view on the *displayed* setup
+  // moves must match it — relabel them for render only (`relabelMoveZ2` is its own inverse for
+  // face turns, so a physical raw turn still matches the raw target). Cross drill stays white-up.
+  const yellowUpTrackDisplay =
+    connected && connectedYellowUp && (rep?.frame ?? config?.frame) !== 'raw';
+  const dispTrackMove = (m: string) => (yellowUpTrackDisplay ? relabelMoveZ2(m) : m);
   const scrambleGuideDone = !connected && rep ? stepIdx >= rep.scrambleView.length : false;
   const methodLabel =
     trainingMethod === 'full' ? 'Full' : TWO_LOOK_DRILLS[trainingMethod as TwoLookDrillId]?.label ?? trainingMethod;
@@ -696,7 +716,7 @@ export const TrainingView: React.FC = () => {
                   <>
                     {trackDoneMoves.map((m, i) => (
                       <span key={`d${i}`} className="px-2 py-1 rounded-md text-xs opacity-40 line-through">
-                        {m}
+                        {dispTrackMove(m)}
                       </span>
                     ))}
                     {trackRemainingMoves.map((m, i) => (
@@ -710,7 +730,7 @@ export const TrainingView: React.FC = () => {
                             : 'bg-[var(--surface-2)] text-[var(--text)]'
                         }`}
                       >
-                        {m}
+                        {dispTrackMove(m)}
                       </span>
                     ))}
                   </>

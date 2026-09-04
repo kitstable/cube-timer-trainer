@@ -212,6 +212,47 @@ describe('Guided solve converges for every scramble / tier / notation', () => {
     }
   }, 60_000);
 
+  it('connected walkthrough, yellow-up view: plan stays post-z2, physical turns relabelled to match', async () => {
+    // With `connectedYellowUp` on, GuidedSolveView keeps the hint moves in the post-z2 frame
+    // (so the written algorithm reads for a yellow-up cube) and relabels each incoming raw
+    // physical turn `relabelMoveZ2(...)` before the tracker sees it. `relabelMoveZ2` is its own
+    // inverse for face turns, so this must converge identically to the default (raw-plan) path.
+    const { relabelMoveZ2 } = await import('../utils/kpuzzleHelper');
+    const { classifyScrambleMove } = await import('../utils/scrambleTracker');
+    const rand = mulberry32(0xBEEF);
+    for (let i = 0; i < 6; i++) {
+      const scr = scramble(rand);
+      let physical = kpuzzle.defaultPattern().applyAlg(new Alg(scr)); // raw frame
+      let solved = false;
+      for (let phaseIter = 0; phaseIter < 20 && !solved; phaseIter++) {
+        const hp = physical.applyAlg(new Alg('z2'));
+        const status = evaluateCFOPFromPattern(hp);
+        if (status.isFullySolved) {
+          solved = true;
+          break;
+        }
+        const phase = status.currentPhase === 'solved' ? 'pll' : status.currentPhase;
+        const slot = ALL_F2L_SLOTS.find((s) => !status.solvedSlots.includes(s));
+        const hint = await findHint(matcher, hp, { phase, activeSlot: slot, techniqueTier: '2look', notationMode: 'simplified' }, false);
+        const plan = hint.moves; // post-z2, NOT relabelled
+        expect(plan.length, `${scr}: empty hint in ${phase}`).toBeGreaterThan(0);
+
+        const done: string[] = [];
+        let correction = false;
+        for (const planMove of plan) {
+          const rawTurn = relabelMoveZ2(planMove);         // what the cube physically reports
+          const seenByTracker = relabelMoveZ2(rawTurn);    // GuidedSolveView relabels it back
+          const cls = classifyScrambleMove(plan, done, seenByTracker, correction);
+          expect(cls.kind, `${scr}: ${phase} plan move ${planMove} classified ${cls.kind}`).not.toBe('error');
+          done.splice(0, done.length, ...cls.nextDone);
+          correction = cls.correctionActive;
+          physical = physical.applyAlg(new Alg(rawTurn));
+        }
+      }
+      expect(solved, `${scr}: yellow-up walkthrough did not reach solved`).toBe(true);
+    }
+  }, 60_000);
+
   it('connected: a wrong turn yields a correction (not a fresh alg), then recovers', async () => {
     // Guided feeds turns into `classifyScrambleMove` against the current hint. A wrong turn
     // must classify `error` with correction moves (so the guide leads you back), and doing

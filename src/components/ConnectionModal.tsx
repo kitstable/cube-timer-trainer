@@ -12,6 +12,8 @@ interface ConnectionModalProps {
 export const ConnectionModal: React.FC<ConnectionModalProps> = ({ isOpen, onClose }) => {
   const { smartCube } = useCubeStore();
   const { connect, disconnect, resyncFromCube } = useSmartCube();
+  const connectedYellowUp = useAppStore((s) => s.connectedYellowUp);
+  const setConnectedYellowUp = useAppStore((s) => s.setConnectedYellowUp);
 
   if (!isOpen) return null;
 
@@ -89,6 +91,21 @@ export const ConnectionModal: React.FC<ConnectionModalProps> = ({ isOpen, onClos
                 <span>Calibrate Solved</span>
               </button>
             </div>
+
+            <label className="flex items-start gap-2.5 p-3 rounded-xl bg-[var(--surface-2)] border border-[var(--border)] cursor-pointer">
+              <input
+                type="checkbox"
+                checked={connectedYellowUp}
+                onChange={(e) => setConnectedYellowUp(e.target.checked)}
+                className="mt-0.5 accent-[var(--blue)] cursor-pointer"
+              />
+              <span className="text-xs text-[var(--text-muted)] leading-relaxed">
+                <span className="font-heading font-medium text-[var(--text)]">Yellow face up in Guided &amp; Training</span>
+                <br />
+                Show the 3D cube last-layer-up (as you hold it for CFOP) during connected Guided
+                Solve and Training. Display only — turn tracking is unchanged.
+              </span>
+            </label>
 
             <button
               onClick={() => {

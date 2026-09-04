@@ -299,11 +299,44 @@ Solve rewrite (spec §8) is still pending.
 
 ## 3D view orientation
 
-The `<twisty-player>` 3D view (`src/components/TwistyPlayerWrapper.tsx`) is **white-up**
-everywhere a live cube drives it — `ScrambleView`, connected `TimedSolveView` /
+The `<twisty-player>` 3D view (`src/components/TwistyPlayerWrapper.tsx`) is **white-up** by
+default everywhere a live cube drives it — `ScrambleView`, connected `TimedSolveView` /
 `GuidedSolveView` / `TrainingView` all feed it raw-frame `visualAlg` with an empty
 `experimentalSetupAlg`, so it mirrors the physical cube exactly as the smart cube reports it
 (the cube reports state and turns in the frame you're physically holding it in).
+
+**Opt-in exception — `useAppStore.connectedYellowUp` (persisted, default off).** When on, the
+**connected** branches of `GuidedSolveView` and `TrainingView` *only* (not Timed, not
+Scramble, not the Training Cross drill's `frame: 'raw'`, never any no-cube branch) render
+last-layer-up: `experimentalSetupAlg="z2"` + `alg = toZ2DisplayAlg(visualAlg)`.
+`toZ2DisplayAlg` (`kpuzzleHelper.ts`) maps each token through the existing `relabelMoveZ2`;
+the identity `solved · z2 · toZ2DisplayAlg(X) == solved · X · z2` (for face-turn X) is proven
+in `src/tests/toZ2DisplayAlg.test.ts`. The toggle lives in `ConnectionModal`'s connected panel.
+**Guard:** `relabelMoveZ2` passes rotation / slice / wide tokens through unchanged (wrong for
+the z2 conjugation), and `reconstructAlgForPattern` emits a trailing rotation token when a
+cube reports `getPattern()` whole-cube-rotated — so the **3D view** gates its transform on
+`isAllFaceTurns(visualAlg)` and falls back to the raw white-up view when it's false. This is
+the defensive answer to the prior revert (below): the failure mode was a mis-transformed
+rotated frame, and that case now just isn't transformed.
+
+**`GuidedSolveView` connected also flips the walkthrough's move frame** (not display-only — a
+white-up 3D view next to a white-up-notation algorithm was the point, so the algorithm text
+has to flip with the picture). `findHint` returns post-z2 moves; the connected walkthrough
+normally relabels them to the raw frame (`moves.map(relabelMoveZ2)`) to match raw
+`moveHistory` turns. With `connectedYellowUp` on it keeps them **post-z2** (the written
+algorithm then reads for a yellow-up cube) and instead relabels each incoming physical turn
+`relabelMoveZ2(m.move)` before the tracker sees it — `relabelMoveZ2` is its own inverse for
+face turns, so the two directions are symmetric and `classifyScrambleMove` / the partial gate
+stay consistent. Toggling mid-solve re-seeds the plan (`fetchHintForCurrentPhase`). `physicalPattern`,
+`moveHistory`, `visualAlg`, phase detection and `useSmartCube` are still untouched — only the
+in-`GuidedSolveView` plan array and the per-turn relabel direction change. Training is attempt-first (no move-by-move solve walkthrough) and all its hint / algorithm
+text (`rep.algorithm`, F2L/2-Look "Show me", the OLL/PLL alg) is already post-z2, so yellow-up
+makes those consistent with the flipped 3D view for free. The one raw-frame surface is the
+connected **setup-scramble** ribbon (`trackDoneMoves` / `trackRemainingMoves`, owned by
+`useSmartCube` / `useAppStore` and left in the raw frame so physical raw turns still match the
+target): `TrainingView` relabels those tokens **for render only** (`dispTrackMove`, gated on
+`connectedYellowUp` and not the Cross drill's `frame: 'raw'`) so the walked-through setup
+matches the yellow-up picture. Tracking, `trackTargetMoves`, and `useSmartCube` are untouched.
 
 The **no-cube** solve/practice paths render **last-layer-up** (`setupAlg="z2"`), because their
 move streams are generated in the app's post-z2 frame (see the post-z2 gotchas above):
@@ -311,12 +344,16 @@ no-cube Guided (`setupAlg = "<scramble> z2"`), no-cube Training OLL/PLL/F2L reps
 (`setupAlg="z2"`). The Training **Cross** drill (`frame: 'raw'`) stays white-up so you watch
 the cross form on top.
 
-A dedicated render-only "yellow-face-up for connected solves" feature was tried (`2e819f9`:
-`relabelForDisplay` + a `z2` setup on the connected views) and **reverted** — the QiYi AI cube
-already reports its state in the orientation you hold it, so adding a `z2` on top double-counted
-it and mirrored every turn (L↔R / U↔D) on real hardware. `relabelForDisplay` and its test were
-deleted with the revert. A connected view that's yellow-up *only when the cube is actually held
-yellow-up* would need the cube's live orientation, which this protocol doesn't expose.
+History: a first render-only "yellow-face-up for connected solves" attempt (`2e819f9`:
+`relabelForDisplay` + a `z2` setup, applied unconditionally to Timed **and** connected
+Guided/Training) was **reverted** (`84caeea`) — on the QiYi AI cube it mirrored every turn
+(L↔R / U↔D) on real hardware, the working theory being a mis-transformed rotated frame
+(`reconstructAlgForPattern` bakes the held orientation into `visualAlg` as a rotation token
+`relabelForDisplay` didn't correctly conjugate). `relabelForDisplay` and its test were
+deleted. The current `connectedYellowUp` opt-in (above) is the narrower retry: Guided +
+Training connected only, off by default, and gated on `isAllFaceTurns(visualAlg)` so the
+rotated-frame case falls back to raw instead of being transformed. Still needs a real-hardware
+pass before it's trusted.
 
 ## Guided Solve rewrite (spec §8 — done)
 
@@ -445,14 +482,14 @@ way:
    render, so the move blob should live in a **separate Dexie table** keyed by solve id
    (`db.version(2)`, additive — no data migration), fetched only when a solve detail view
    opens. Populated for smart-cube solves only.
-8. **"Yellow face up" for connected solve 3D views — tried and reverted.** `2e819f9` added a
-   render-only `relabelForDisplay` + `z2` setup to show the connected Timed/Guided/Training 3D
-   view last-layer-up; it mirrored every turn (L↔R / U↔D) on real hardware because the QiYi
-   already reports its state in the held orientation, so it was reverted (files deleted). See
-   the "3D view orientation" section. No-cube Guided/Training keep their original last-layer-up
-   view (their move streams are post-z2 anyway). Doing this properly for a connected cube needs
-   the cube's live physical orientation, which the driver doesn't surface — descoped unless
-   that changes.
+8. **"Yellow face up" for connected solve 3D views — reverted once, now a gated opt-in
+   pending hardware sign-off.** `2e819f9` added an unconditional render-only `relabelForDisplay`
+   + `z2` setup (Timed + connected Guided/Training); it mirrored every turn (L↔R / U↔D) on the
+   QiYi and was reverted (`84caeea`). Re-added narrower as `useAppStore.connectedYellowUp`
+   (persisted, default off): connected Guided + connected Training only, via
+   `toZ2DisplayAlg` + `isAllFaceTurns` guard — see the "3D view orientation" section. Timed
+   and the Training Cross drill stay white-up. **Not yet verified on real hardware** — until
+   it is, treat this as provisional.
 9. **Some duplicated/vestigial pieces from incremental work:**
    - ~~`src/components/ui/MoveRibbon.tsx` unused~~ — deleted (Guided rewrite pass).
    - `ALL_F2L_SLOTS` is defined twice (`src/utils/constants.ts` and

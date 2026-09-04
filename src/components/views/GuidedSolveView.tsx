@@ -9,7 +9,7 @@ import { useSolverWorker } from '../../hooks/useSolverWorker';
 import { evaluateCFOPFromPattern } from '../../utils/phaseDetector';
 import { classifyScrambleMove } from '../../utils/scrambleTracker';
 import { createScramblePartialGate, type ScramblePartialGate } from '../../utils/scramblePartialGate';
-import { relabelMoveZ2 } from '../../utils/kpuzzleHelper';
+import { relabelMoveZ2, toZ2DisplayAlg, isAllFaceTurns } from '../../utils/kpuzzleHelper';
 import { saveSolve } from '../../db/repository';
 import { PHASE_DISPLAY_NAMES, ALL_F2L_SLOTS, getMoveDescription, SCRAMBLE_PARTIAL_GRACE_MS } from '../../utils/constants';
 import type { CFOPPhase, F2LSlotId, MoveHint, ScrambleFeedback, TechniqueTier, NotationMode } from '../../types/cube';
@@ -41,7 +41,7 @@ export const GuidedSolveView: React.FC = () => {
     setScramble: setCubeStoreScramble,
   } = useCubeStore();
   const physicalPattern = useCubeStore((s) => s.physicalPattern);
-  const { currentScramble, currentProfileId, setScramble: setAppScramble, setMode, techniqueTier, setTechniqueTier, notationMode, setNotationMode } =
+  const { currentScramble, currentProfileId, setScramble: setAppScramble, setMode, techniqueTier, setTechniqueTier, notationMode, setNotationMode, connectedYellowUp } =
     useAppStore();
   const { findHint, generateScramble, isReady } = useSolverWorker();
   const isDesktop = useIsDesktop();
@@ -131,13 +131,19 @@ export const GuidedSolveView: React.FC = () => {
           });
           setHintMoveIndex(0);
           setFeedback(null);
-          // Seed live walkthrough tracking against this hint (raw smart-cube frame).
-          const raw = moves.map(relabelMoveZ2);
-          planRawRef.current = raw;
+          // Seed live walkthrough tracking against this hint. `findHint` returns moves in the
+          // post-z2 frame. Default (white-up 3D view): relabel them into the raw smart-cube
+          // frame so the written algorithm matches a white-up cube and lines up with raw
+          // `moveHistory` turns. Yellow-up view (`connectedYellowUp`): keep them post-z2 — the
+          // move-consuming effect relabels incoming physical turns to match — so the algorithm
+          // reads for a yellow-up cube, consistent with the flipped 3D view.
+          const planFrameYellowUp = useAppStore.getState().connectedYellowUp;
+          const planMoves = planFrameYellowUp ? moves : moves.map(relabelMoveZ2);
+          planRawRef.current = planMoves;
           planDoneRef.current = [];
           planCorrectionRef.current = false;
           partialGateRef.current?.reset(); // drop any half-turn held against the old plan
-          setPlanRemaining(raw);
+          setPlanRemaining(planMoves);
           setPlanDone([]);
           consumedMovesRef.current = moveCountAtFetch;
         }
@@ -242,7 +248,13 @@ export const GuidedSolveView: React.FC = () => {
       return;
     }
     if (hist.length === consumedMovesRef.current) return;
-    const fresh = hist.slice(consumedMovesRef.current).map((m) => m.move);
+    // Physical turns arrive in the raw smart-cube frame. The walkthrough plan is in the raw
+    // frame by default, or post-z2 when the yellow-up 3D view is on (see
+    // `fetchHintForCurrentPhase`) — relabel incoming turns to match in that case.
+    const toPlanFrame = useAppStore.getState().connectedYellowUp
+      ? relabelMoveZ2
+      : (m: string) => m;
+    const fresh = hist.slice(consumedMovesRef.current).map((m) => toPlanFrame(m.move));
     consumedMovesRef.current = hist.length;
 
     if (planRawRef.current.length === 0) {
@@ -264,6 +276,19 @@ export const GuidedSolveView: React.FC = () => {
     if (!connected) partialGateRef.current?.reset();
     return () => partialGateRef.current?.reset();
   }, [connected]);
+
+  // Re-seed the walkthrough when the yellow-up display preference is toggled mid-solve — the
+  // plan's move frame (raw vs post-z2) depends on it. Skip the initial mount; the init effect
+  // already fetches.
+  const yellowUpToggleMountRef = useRef(true);
+  useEffect(() => {
+    if (yellowUpToggleMountRef.current) {
+      yellowUpToggleMountRef.current = false;
+      return;
+    }
+    if (connected && isReady) fetchHintForCurrentPhase();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [connectedYellowUp]);
 
   // Connected: track solve timing and save a `mode: 'guided'` Solve when the cube is solved.
   useEffect(() => {
@@ -393,11 +418,22 @@ export const GuidedSolveView: React.FC = () => {
 
   const progressiveAlg = moveHistory.map((m) => m.move).join(' ').trim();
   const cubeHeight = isDesktop ? 380 : 215;
-  // Connected: mirror the cube exactly as its sensor reports it (`visualAlg`, raw frame).
   // No-cube: the hint move stream is generated in the app's post-z2 frame, so the setup carries
-  // the matching `z2` (this is the original last-layer-up view for OLL/PLL practice).
-  const setupAlg = connected ? '' : currentScramble ? `${currentScramble} z2` : 'z2';
-  const viewAlg = connected ? visualAlg : progressiveAlg;
+  // the matching `z2` (this is the original last-layer-up view for OLL/PLL practice). Untouched.
+  // Connected: default is to mirror the cube exactly as its sensor reports it (`visualAlg`, raw
+  // frame). With the `connectedYellowUp` preference on, render yellow-face-up instead —
+  // `z2` setup + `toZ2DisplayAlg(visualAlg)` — but only while `visualAlg` is all face turns
+  // (a reconstructed rotated frame carries a rotation token the display relabel can't handle;
+  // fall back to the raw view then).
+  const connectedYellow = connected && connectedYellowUp && isAllFaceTurns(visualAlg);
+  const setupAlg = connected
+    ? connectedYellow
+      ? 'z2'
+      : ''
+    : currentScramble
+    ? `${currentScramble} z2`
+    : 'z2';
+  const viewAlg = connected ? (connectedYellow ? toZ2DisplayAlg(visualAlg) : visualAlg) : progressiveAlg;
 
   const TIERS: { id: TechniqueTier; label: string }[] = [
     { id: '2look', label: '2-Look' },

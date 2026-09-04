@@ -85,6 +85,52 @@ export function relabelMoveZ2(move: string): string {
   return mapped ? mapped + m.slice(1) : move;
 }
 
+/**
+ * A single plain outer face turn: `U` `D` `L` `R` `F` `B` with an optional `'`, `2`, or
+ * `2'` / `'2` modifier. Nothing else — no wide moves, slices, whole-cube rotations, or
+ * parenthesised groups.
+ */
+const FACE_TURN_TOKEN = /^[UDLRFB](?:2'|'2|2|')?$/;
+
+/** True iff every whitespace-separated token in `alg` is a plain outer face turn. `''` → true. */
+export function isAllFaceTurns(alg: string): boolean {
+  const t = alg.trim();
+  if (!t) return true;
+  return t.split(/\s+/).every((tok) => FACE_TURN_TOKEN.test(tok));
+}
+
+/**
+ * Relabel a raw / library-default (white-up) **face-turn** alg string into the post-z2
+ * (yellow-up) *display* frame, token by token via the already-tested `relabelMoveZ2`
+ * (U↔D, L↔R, F/B fixed, direction preserved — z2 is a proper rotation).
+ *
+ * The identity that makes the wiring physically correct (proven for face-turn algs in
+ * `src/tests/toZ2DisplayAlg.test.ts`):
+ *
+ *   solved · z2 · toZ2DisplayAlg(X)   ==   solved · X · z2
+ *
+ * i.e. `experimentalSetupAlg="z2"` + `alg=toZ2DisplayAlg(rawMoves)` shows exactly the real
+ * raw-frame cube state, viewed after tipping the whole cube over by z2 (yellow on top).
+ *
+ * **DISPLAY-ONLY.** Feed the result only to `<twisty-player>`. Never round-trip it through
+ * `useCubeStore` / the solver / the move trackers / persistence — those all stay in the raw
+ * frame by design.
+ *
+ * **Limitation (callers must gate on `isAllFaceTurns`):** `relabelMoveZ2` passes slice, wide
+ * and whole-cube-rotation tokens through *unchanged*, which is NOT the z2 conjugation for
+ * them (`z2 · y · z2` is `y'`, not `y`). `visualAlg` can end with a rotation token when a
+ * smart cube reports `getPattern()` in a rotated whole-cube orientation (see
+ * `reconstructAlgForPattern`). In that case the caller must fall back to the untransformed
+ * raw view rather than mis-relabel — this is deliberate defensive behaviour, since a
+ * mis-transformed rotated frame is exactly the class of bug that reverted this feature once
+ * before (commit 2e819f9).
+ */
+export function toZ2DisplayAlg(rawAlgString: string): string {
+  const t = rawAlgString.trim();
+  if (!t) return '';
+  return t.split(/\s+/).map(relabelMoveZ2).join(' ');
+}
+
 export function isPatternSolved(pattern: any): boolean {
   if (!pattern) return false;
   const pData = pattern.patternData || pattern;

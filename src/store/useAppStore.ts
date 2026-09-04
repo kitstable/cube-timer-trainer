@@ -3,6 +3,28 @@ import type { AppMode, TechniqueTier, NotationMode, ScrambleFeedback } from '../
 import type { TrainingPhase } from '../types/db';
 import { classifyScrambleMove } from '../utils/scrambleTracker';
 
+/**
+ * The one persisted bit of app state. Everything else here is session-scoped; this needs to
+ * survive a reload so the user isn't re-toggling it every session. Kept as a bare
+ * localStorage key rather than wrapping the whole store in `persist` middleware, to keep the
+ * blast radius to these two helpers.
+ */
+const CONNECTED_YELLOW_UP_KEY = 'cube-trainer:connectedYellowUp';
+function readConnectedYellowUp(): boolean {
+  try {
+    return localStorage.getItem(CONNECTED_YELLOW_UP_KEY) === 'true';
+  } catch {
+    return false;
+  }
+}
+function writeConnectedYellowUp(value: boolean): void {
+  try {
+    localStorage.setItem(CONNECTED_YELLOW_UP_KEY, String(value));
+  } catch {
+    /* private mode / storage disabled — the in-memory value still applies this session */
+  }
+}
+
 /** Session-scoped Training tally (not persisted — only completed reps go to Dexie). */
 export interface TrainingStats {
   attempts: number;
@@ -29,6 +51,13 @@ interface AppStoreState {
   isProfileModalOpen: boolean;
   techniqueTier: TechniqueTier;
   notationMode: NotationMode;
+  /**
+   * Display-only preference (persisted). When true, the CONNECTED Guided Solve and
+   * CONNECTED Training 3D views render yellow-face-up (`z2` setup + `toZ2DisplayAlg` of the
+   * raw `visualAlg`) instead of white-up. Affects nothing but what's fed to
+   * `<twisty-player>` in those two connected branches.
+   */
+  connectedYellowUp: boolean;
 
   /** Training mode: which CFOP phase is being drilled. */
   trainingSubMode: TrainingPhase;
@@ -65,6 +94,7 @@ interface AppStoreState {
   setIsProfileModalOpen: (open: boolean) => void;
   setTechniqueTier: (tier: TechniqueTier) => void;
   setNotationMode: (mode: NotationMode) => void;
+  setConnectedYellowUp: (value: boolean) => void;
 }
 
 export const useAppStore = create<AppStoreState>((set) => ({
@@ -81,6 +111,7 @@ export const useAppStore = create<AppStoreState>((set) => ({
   isProfileModalOpen: false,
   techniqueTier: '2look',
   notationMode: 'simplified',
+  connectedYellowUp: readConnectedYellowUp(),
   trainingSubMode: 'OLL',
   trainingMethod: 'full',
   trainingCaseFilter: null,
@@ -180,4 +211,8 @@ export const useAppStore = create<AppStoreState>((set) => ({
   setIsProfileModalOpen: (isProfileModalOpen) => set({ isProfileModalOpen }),
   setTechniqueTier: (techniqueTier) => set({ techniqueTier }),
   setNotationMode: (notationMode) => set({ notationMode }),
+  setConnectedYellowUp: (connectedYellowUp) => {
+    writeConnectedYellowUp(connectedYellowUp);
+    set({ connectedYellowUp });
+  },
 }));
