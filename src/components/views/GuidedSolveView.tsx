@@ -9,7 +9,6 @@ import { useSolverWorker } from '../../hooks/useSolverWorker';
 import { evaluateCFOPFromPattern } from '../../utils/phaseDetector';
 import { classifyScrambleMove } from '../../utils/scrambleTracker';
 import { relabelMoveZ2 } from '../../utils/kpuzzleHelper';
-import { relabelForDisplay } from '../../utils/relabelForDisplay';
 import { saveSolve } from '../../db/repository';
 import { PHASE_DISPLAY_NAMES, ALL_F2L_SLOTS, getMoveDescription } from '../../utils/constants';
 import type { CFOPPhase, F2LSlotId, MoveHint, ScrambleFeedback, TechniqueTier, NotationMode } from '../../types/cube';
@@ -86,6 +85,10 @@ export const GuidedSolveView: React.FC = () => {
     async (tierOverride?: TechniqueTier, notationOverride?: NotationMode) => {
       const hintPattern = getHintPattern();
       if (!hintPattern || !isReady) return;
+      // Snapshot the move count *now* — the hint is computed from the cube state as of this
+      // moment, so any turns made during the (async) `findHint` round-trip must still be
+      // classified against the new plan afterwards, not silently swallowed.
+      const moveCountAtFetch = useCubeStore.getState().moveHistory.length;
 
       const status = evaluateCFOPFromPattern(hintPattern);
       const phase = status.currentPhase;
@@ -119,7 +122,7 @@ export const GuidedSolveView: React.FC = () => {
           planCorrectionRef.current = false;
           setPlanRemaining(raw);
           setPlanDone([]);
-          consumedMovesRef.current = useCubeStore.getState().moveHistory.length;
+          consumedMovesRef.current = moveCountAtFetch;
         }
       } catch (err) {
         console.warn('Failed to calculate guidance hint:', err);
@@ -169,10 +172,19 @@ export const GuidedSolveView: React.FC = () => {
   // tracker) — a match ticks a move off; a wrong / half turn keeps the plan, flashes a cue
   // and prepends correction move(s) so the guide leads you back on track (not a new alg).
   // Only *finishing* the step (`complete`) recomputes the next hint.
+  // `isCalculating` is a dep so this re-runs the moment a recompute finishes — any turns made
+  // during the async `findHint` window (when this effect early-returns) are then flushed and
+  // classified against the fresh plan rather than sitting unprocessed until the next turn.
   useEffect(() => {
     if (!connected || !isReady || recomputingRef.current) return;
     const hist = useCubeStore.getState().moveHistory;
-    if (hist.length <= consumedMovesRef.current) return;
+    if (hist.length < consumedMovesRef.current) {
+      // History shrank (header resync / calibrate) — plan is stale, start fresh.
+      consumedMovesRef.current = hist.length;
+      fetchHintForCurrentPhase();
+      return;
+    }
+    if (hist.length === consumedMovesRef.current) return;
     const fresh = hist.slice(consumedMovesRef.current).map((m) => m.move);
     consumedMovesRef.current = hist.length;
 
@@ -201,7 +213,7 @@ export const GuidedSolveView: React.FC = () => {
           : null
       );
     }
-  }, [connected, isReady, physicalPattern, fetchHintForCurrentPhase]);
+  }, [connected, isReady, physicalPattern, isCalculating, fetchHintForCurrentPhase]);
 
   // Auto-fade the wrong/half-turn cue if the user pauses.
   useEffect(() => {
@@ -335,10 +347,11 @@ export const GuidedSolveView: React.FC = () => {
 
   const progressiveAlg = moveHistory.map((m) => m.move).join(' ').trim();
   const cubeHeight = isDesktop ? 380 : 215;
-  // Yellow-face-up view. No-cube already renders post-z2 (hint moves are generated in that
-  // frame); connected feeds raw-frame `visualAlg`, so relabel it (render-only).
-  const setupAlg = connected ? 'z2' : currentScramble ? `${currentScramble} z2` : 'z2';
-  const viewAlg = connected ? relabelForDisplay(visualAlg) : progressiveAlg;
+  // Connected: mirror the cube exactly as its sensor reports it (`visualAlg`, raw frame).
+  // No-cube: the hint move stream is generated in the app's post-z2 frame, so the setup carries
+  // the matching `z2` (this is the original last-layer-up view for OLL/PLL practice).
+  const setupAlg = connected ? '' : currentScramble ? `${currentScramble} z2` : 'z2';
+  const viewAlg = connected ? visualAlg : progressiveAlg;
 
   const TIERS: { id: TechniqueTier; label: string }[] = [
     { id: '2look', label: '2-Look' },
