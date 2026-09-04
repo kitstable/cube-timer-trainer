@@ -368,6 +368,29 @@ live cube).
   Connected Guided *was* verified against real hardware by the user — both the "recomputes on
   every turn" and "wrong turn skips to a new alg" fixes came from that testing.
 
+### Loop-guard fix — deliberate re-requests no longer escalate to the full solve
+
+`solverWorker.ts`'s "same-situation loop guard" (added in `1d71678` to stop auto-advance
+re-issuing a non-progressing hint forever) tripped on *any* repeat `FIND_HINT` for an
+unchanged cube state — including the user changing technique tier / notation, or tapping
+**Recalculate**, on the first (cross) step. Escalation routes the cross hint through
+`solvePhasePrefix`, whose generic optimal solver doesn't build a CFOP cross first, so the
+sliced "cross prefix" is nearly the whole solve — the user saw "clicking any option reloads
+the algorithm and it's a complete solve, not just the white cross". Fixes:
+- `src/solver/hintLoopGuard.ts` (new, pure, tested — `src/tests/hintLoopGuard.test.ts`):
+  `hintKey` now includes `tier` + `notationMode` (a different tier/notation is a genuinely
+  different request), and `shouldForceFallback(lastHint, key, bypassLoopGuard)` centralises
+  the decision.
+- `SolverWorkerRequest` FIND_HINT carries an optional `bypassLoopGuard`. `useSolverWorker`'s
+  `findHint` takes a trailing `bypassLoopGuard` arg. `GuidedSolveView`'s
+  `fetchHintForCurrentPhase(tier?, notation?, deliberate=false)` passes `true` from
+  `handleTierChange` / `handleNotationChange` / `handleRecalculate` (the three Recalculate
+  buttons), `false` from every automatic caller (mount/init effects, walk-through
+  `complete`, no-cube last-move). Auto-play is retired, so a human clicking Recalculate
+  can't create the loop the guard originally defended against, and the pure `findHint`
+  converges on its own regardless (`guidedConvergence.test.ts` runs it with
+  `forceFallback=false`).
+
 ## Where the code stands relative to the spec — open items to discuss
 
 The spec is the intended design; here's where the actual code hasn't caught up, or made a

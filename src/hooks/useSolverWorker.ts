@@ -130,7 +130,8 @@ export function useSolverWorker() {
       patternData: any,
       activeSlot?: string,
       techniqueTier?: TechniqueTier,
-      notationMode?: NotationMode
+      notationMode?: NotationMode,
+      bypassLoopGuard?: boolean
     ): Promise<any> => {
       return new Promise((resolve, reject) => {
         const worker = getSharedWorker();
@@ -142,6 +143,7 @@ export function useSolverWorker() {
           activeSlot,
           techniqueTier,
           notationMode,
+          bypassLoopGuard,
         } satisfies SolverWorkerRequest);
       });
     },

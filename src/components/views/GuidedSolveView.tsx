@@ -82,7 +82,7 @@ export const GuidedSolveView: React.FC = () => {
   }, []);
 
   const fetchHintForCurrentPhase = useCallback(
-    async (tierOverride?: TechniqueTier, notationOverride?: NotationMode) => {
+    async (tierOverride?: TechniqueTier, notationOverride?: NotationMode, deliberate = false) => {
       const hintPattern = getHintPattern();
       if (!hintPattern || !isReady) return;
       // Snapshot the move count *now* — the hint is computed from the cube state as of this
@@ -101,7 +101,14 @@ export const GuidedSolveView: React.FC = () => {
       recomputingRef.current = true;
       try {
         const nextUnsolvedSlot = ALL_F2L_SLOTS.find((s) => !status.solvedSlots.includes(s));
-        const res = await findHint(phase, hintPattern.patternData, nextUnsolvedSlot, activeTier, activeNotation);
+        const res = await findHint(
+          phase,
+          hintPattern.patternData,
+          nextUnsolvedSlot,
+          activeTier,
+          activeNotation,
+          deliberate
+        );
         if (res) {
           const hintPhase = (res.phase || phase) as CFOPPhase;
           const moves = res.moves || [];
@@ -259,13 +266,16 @@ export const GuidedSolveView: React.FC = () => {
 
   const handleTierChange = (newTier: TechniqueTier) => {
     setTechniqueTier(newTier);
-    fetchHintForCurrentPhase(newTier, notationMode);
+    fetchHintForCurrentPhase(newTier, notationMode, true);
   };
 
   const handleNotationChange = (newMode: NotationMode) => {
     setNotationMode(newMode);
-    fetchHintForCurrentPhase(techniqueTier, newMode);
+    fetchHintForCurrentPhase(techniqueTier, newMode, true);
   };
+
+  /** Explicit user "Recalculate" — a fresh matcher hint, never the loop-guard escalation. */
+  const handleRecalculate = () => fetchHintForCurrentPhase(undefined, undefined, true);
 
   // --- No-cube manual stepping (virtual `applyMove`); hidden when a cube is connected. ---
   const handleExecuteNextMove = useCallback(() => {
@@ -404,7 +414,7 @@ export const GuidedSolveView: React.FC = () => {
           <div className="text-xs text-[var(--text-muted)] font-medium">{stageSubtitle}</div>
         </div>
         <button
-          onClick={() => fetchHintForCurrentPhase()}
+          onClick={handleRecalculate}
           disabled={isCalculating}
           className="flex items-center gap-1 text-xs font-heading font-medium text-[var(--text-muted)] hover:text-[var(--text)] bg-[var(--surface)] hover:bg-[var(--surface-2)] border border-[var(--border)] rounded-lg px-2.5 py-1.5 transition-colors cursor-pointer"
         >
@@ -462,7 +472,7 @@ export const GuidedSolveView: React.FC = () => {
             <div className="text-xs text-[var(--text-muted)] font-medium mt-0.5">{stageSubtitle}</div>
           </div>
           <button
-            onClick={() => fetchHintForCurrentPhase()}
+            onClick={handleRecalculate}
             disabled={isCalculating}
             className="flex items-center gap-1.5 text-xs font-heading font-medium text-[var(--text)] bg-[var(--surface-2)] hover:bg-[var(--border)] border border-[var(--border)] rounded-xl px-3 py-2 transition-colors cursor-pointer"
           >
@@ -659,7 +669,7 @@ export const GuidedSolveView: React.FC = () => {
           )}
 
           <button
-            onClick={() => fetchHintForCurrentPhase()}
+            onClick={handleRecalculate}
             disabled={isCalculating}
             className="flex-1 py-3 rounded-xl font-heading font-medium text-[13px] bg-transparent border border-[var(--border)] text-[var(--text)] hover:bg-[var(--surface)] active:scale-[0.99] transition-all flex items-center justify-center gap-2 cursor-pointer"
           >

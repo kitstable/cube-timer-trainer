@@ -6,6 +6,7 @@ import { solveCrossBFS } from './crossBfs';
 import { findHint } from './findHint';
 import { reconstructAlgForPattern } from './fullSolveFallback';
 import { generateCaseScramble } from './trainingScrambleGenerator';
+import { hintKey, shouldForceFallback, type LastHint } from './hintLoopGuard';
 import type { SolverWorkerRequest, SolverWorkerResponse } from '../types/solver';
 
 
@@ -14,14 +15,8 @@ let kpInstance: KPuzzle | null = null;
 let caseMatcher: CaseMatcher | null = null;
 
 // Loop guard: remember the last hint we handed out for a given situation so we
-// never emit the same non-progressing sequence twice in a row.
-let lastHint: { key: string; moves: string } | null = null;
-
-function hintKey(phase: string, activeSlot: string | undefined, pattern: KPattern): string {
-  const e = pattern.patternData.EDGES;
-  const c = pattern.patternData.CORNERS;
-  return `${phase}|${activeSlot ?? ''}|${e.pieces.join(',')}|${e.orientation.join(',')}|${c.pieces.join(',')}|${c.orientation.join(',')}`;
-}
+// never emit the same non-progressing sequence twice in a row. See hintLoopGuard.ts.
+let lastHint: LastHint | null = null;
 
 async function initSolver(): Promise<KPuzzle> {
   if (!kpInstance) {
@@ -71,11 +66,10 @@ self.onmessage = async (e: MessageEvent<SolverWorkerRequest>) => {
 
       case 'FIND_HINT': {
         const pattern = new (kp.defaultPattern().constructor as any)(kp, req.patternData) as KPattern;
-        const key = hintKey(req.phase, req.activeSlot, pattern);
-        // If the same situation asked again would replay the exact sequence we
-        // just gave (it clearly didn't advance anything), skip the matchers and
-        // go straight to the guaranteed full-solve fallback.
-        const forceFallback = lastHint !== null && lastHint.key === key;
+        const tier = req.techniqueTier || req.tier || '2look';
+        const notationMode = req.notationMode || 'simplified';
+        const key = hintKey(req.phase, req.activeSlot, tier, notationMode, pattern);
+        const forceFallback = shouldForceFallback(lastHint, key, req.bypassLoopGuard);
 
         const result = await findHint(caseMatcher, pattern, req, forceFallback);
         lastHint = { key, moves: result.moves.join(' ') };

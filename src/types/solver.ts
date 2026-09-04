@@ -31,6 +31,13 @@ export type SolverWorkerRequest =
       notationMode?: NotationMode;
       tier?: any;
       method?: any;
+      /**
+       * Skip the worker's same-situation loop guard for this request. Set for
+       * *deliberate* re-requests (the user changed tier/notation, or tapped
+       * Recalculate) — those legitimately ask for a fresh matcher hint for the
+       * current cube state and must not be escalated to the full-solve fallback.
+       */
+      bypassLoopGuard?: boolean;
     }
   | { type: 'RECONSTRUCT_ALG'; patternData: any }
   | {
