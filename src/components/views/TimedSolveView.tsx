@@ -82,7 +82,7 @@ export const TimedSolveView: React.FC = () => {
   // Spacebar hotkey handler
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (timerState === 'paused' || timerState === 'micro-solve') return;
+      if (timerState === 'paused' || timerState === 'micro-solve' || timerState === 'completed') return;
       if (e.code === 'Space' && !e.repeat) {
         e.preventDefault();
         handleHoldStart();
@@ -90,7 +90,7 @@ export const TimedSolveView: React.FC = () => {
     };
 
     const handleKeyUp = (e: KeyboardEvent) => {
-      if (timerState === 'paused' || timerState === 'micro-solve') return;
+      if (timerState === 'paused' || timerState === 'micro-solve' || timerState === 'completed') return;
       if (e.code === 'Space') {
         e.preventDefault();
         handleHoldRelease();
@@ -174,22 +174,26 @@ export const TimedSolveView: React.FC = () => {
     <div
       className="flex flex-col lg:grid lg:grid-cols-12 lg:gap-8 flex-1 pb-4 select-none"
       onMouseDown={(e) => {
-        if (timerState === 'paused' || timerState === 'micro-solve') return;
+        // A completed/DNF'd solve stays on screen for review (splits, +2/DNF/delete) — a
+        // stray tap/click anywhere while it's showing (e.g. to scroll or read the phase
+        // breakdown) must not reset the timer and re-arm auto-start. Leaving 'completed'
+        // now requires the explicit "Start Next Solve" button below.
+        if (timerState === 'paused' || timerState === 'micro-solve' || timerState === 'completed') return;
         if ((e.target as HTMLElement).closest('button, a, input, [role="button"], [role="dialog"]')) return;
         handleHoldStart();
       }}
       onMouseUp={(e) => {
-        if (timerState === 'paused' || timerState === 'micro-solve') return;
+        if (timerState === 'paused' || timerState === 'micro-solve' || timerState === 'completed') return;
         if ((e.target as HTMLElement).closest('button, a, input, [role="button"], [role="dialog"]')) return;
         handleHoldRelease();
       }}
       onTouchStart={(e) => {
-        if (timerState === 'paused' || timerState === 'micro-solve') return;
+        if (timerState === 'paused' || timerState === 'micro-solve' || timerState === 'completed') return;
         if ((e.target as HTMLElement).closest('button, a, input, [role="button"], [role="dialog"]')) return;
         handleHoldStart();
       }}
       onTouchEnd={(e) => {
-        if (timerState === 'paused' || timerState === 'micro-solve') return;
+        if (timerState === 'paused' || timerState === 'micro-solve' || timerState === 'completed') return;
         if ((e.target as HTMLElement).closest('button, a, input, [role="button"], [role="dialog"]')) return;
         handleHoldRelease();
       }}
@@ -427,6 +431,22 @@ export const TimedSolveView: React.FC = () => {
                   <span>Delete</span>
                 </button>
               </div>
+
+              {/* Start Next Solve: the only way back to idle from a completed/DNF'd solve —
+                  deliberate, so reviewing the result (scrolling, reading splits) can never
+                  double as "start the timer again". */}
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  resetTimer();
+                }}
+                onMouseDown={(e) => e.stopPropagation()}
+                onTouchStart={(e) => e.stopPropagation()}
+                className="w-full py-3 rounded-xl font-heading font-semibold text-[13px] bg-[var(--surface-2)] text-[var(--text)] border border-[var(--border)] hover:bg-[var(--surface)] active:scale-[0.99] transition-all flex items-center justify-center gap-2 cursor-pointer"
+              >
+                <Play className="w-3.5 h-3.5 fill-current" />
+                <span>Start Next Solve</span>
+              </button>
 
               {/* Next Scramble Button */}
               <button
