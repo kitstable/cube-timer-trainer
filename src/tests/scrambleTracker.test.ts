@@ -1,5 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { classifyScrambleMove, type ScrambleClassification } from '../utils/scrambleTracker';
+import {
+  classifyScrambleMove,
+  feedbackForClassification,
+  type ScrambleClassification,
+} from '../utils/scrambleTracker';
 
 /** Thread a run of physical turns through the tracker. */
 function run(scramble: string[], moves: string[]): ScrambleClassification {
@@ -115,5 +119,34 @@ describe('classifyScrambleMove', () => {
     const r = run(S, ['R', "R'", "L'", 'D', 'F2']);
     expect(r.kind).toBe('complete');
     expect(r.nextRemaining).toEqual([]);
+  });
+});
+
+describe('feedbackForClassification', () => {
+  it('no cue on a clean progressing / completing turn', () => {
+    expect(feedbackForClassification(run(S, ["L'"]))).toBeNull();
+    expect(feedbackForClassification(run(S, ["L'", 'D', 'F2']))).toBeNull();
+  });
+
+  it('amber cue for a same-face half turn', () => {
+    expect(feedbackForClassification(run(['L2', 'D', 'F2'], ["L'"]))).toEqual({
+      kind: 'partial',
+      corrections: ["L'"],
+    });
+  });
+
+  it('red cue on a wrong turn', () => {
+    expect(feedbackForClassification(run(S, ['R']))).toEqual({ kind: 'error', corrections: ["R'"] });
+  });
+
+  it('keeps the red cue up (with the remaining owed moves) while a mistake is only half-fixed', () => {
+    // Two wrong turns, then undo one: the classification is `progress` (burden shrank) but a
+    // correction is still owed — the cue must stay, not silently vanish.
+    const halfFixed = run(S, ['R', 'F', "F'"]);
+    expect(halfFixed.kind).toBe('progress');
+    expect(feedbackForClassification(halfFixed)).toEqual({ kind: 'error', corrections: ["R'"] });
+
+    const fullyFixed = run(S, ['R', 'F', "F'", "R'"]);
+    expect(feedbackForClassification(fullyFixed)).toBeNull();
   });
 });

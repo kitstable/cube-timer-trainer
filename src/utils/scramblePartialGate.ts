@@ -8,20 +8,26 @@
  * when the second `R` lands.
  *
  * This gate sits between the BLE move event and `applyPhysicalTrackMove`. When a turn
- * would classify as `partial` it is *held* for `graceMs`; if a second turn arrives first
- * the held move is committed and the new one processed normally (a fluid double turn then
- * resolves to `progress` with no amber frame). If the grace timer fires with the move
- * still held, it is committed — the user genuinely stopped mid-face and should see the
- * "keep turning this face" cue.
+ * would classify as `partial` it is *held* for `graceMs`. If a second turn arrives first
+ * on the *same face* (the real shape of a double turn — `R` then `R` for an `R2`), the two
+ * are **merged** and processed as one move (`R2`), so the guide never briefly shows the
+ * double as "one done, one to go" and never flashes the amber cue mid-double. A same-face
+ * pair that cancels (`R` then `R'`) is dropped as a no-op wobble. If the second turn is on
+ * a different face the held one was a genuine mid-face stop: it is committed (raising its
+ * cue) and the new turn processed after it. If the grace timer fires with the move still
+ * held, it is committed for the same reason.
  *
  * `progress` / `complete` / `error` / `ignored` are never deferred — a wrong-face turn
  * still corrects instantly.
  *
  * No import of the store or `cubing`: `classify` and `commit` are injected so this is
  * unit-testable with fake timers, the way `syncPatternAndRoute` injects its deps.
+ * `simplifyMoveSequence` / `sameFace` are pure string algebra (no `cubing`), same as the
+ * tracker this feeds.
  */
 
 import type { ScrambleMoveKind } from './scrambleTracker';
+import { simplifyMoveSequence, sameFace } from './moveSimplifier';
 
 export interface ScramblePartialGateDeps {
   /** Classify a turn against the current tracker state (kind is all the gate needs). */
@@ -74,13 +80,8 @@ export function createScramblePartialGate(deps: ScramblePartialGateDeps): Scramb
     heldMove = null;
   };
 
-  const feed = (move: string) => {
-    // A move is already held: a second turn arrived within the grace window. Commit the
-    // held one, then handle this turn from the (now-updated) state.
-    if (heldMove !== null) {
-      flush();
-    }
-
+  /** Classify `move` against the current tracker state and either commit it or hold it. */
+  const process = (move: string) => {
     const kind = deps.classify(move);
     if (kind === 'partial') {
       heldMove = move;
@@ -92,8 +93,36 @@ export function createScramblePartialGate(deps: ScramblePartialGateDeps): Scramb
       }, deps.graceMs);
       return;
     }
-
     deps.commit(move);
+  };
+
+  const feed = (move: string) => {
+    if (heldMove !== null) {
+      const held = heldMove;
+      cancelTimer();
+      heldMove = null;
+
+      if (sameFace(held, move)) {
+        // The real shape of a double turn: two quarter-turns on one face. Merge and
+        // process once so the double never flashes the half-turn cue or briefly reads as
+        // "one done, one to go".
+        const merged = simplifyMoveSequence([held, move]);
+        if (merged.length === 0) return; // `R` then `R'` — turned straight back, a no-op
+        if (merged.length === 1) {
+          process(merged[0]);
+          return;
+        }
+        // Same-face pair always merges to 0 or 1 tokens; this is unreachable, but stay safe.
+        deps.commit(held);
+        process(move);
+        return;
+      }
+
+      // Different face — the held turn was a genuine mid-face stop. Surface it, then this.
+      deps.commit(held);
+    }
+
+    process(move);
   };
 
   return { feed, flush, reset, hasHeld: () => heldMove !== null };

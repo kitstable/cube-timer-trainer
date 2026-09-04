@@ -24,6 +24,7 @@ import {
   sameFace,
   isSimpleFaceMove,
 } from './moveSimplifier';
+import type { ScrambleFeedback } from '../types/cube';
 
 export type ScrambleMoveKind =
   | 'progress' // on the guided path (or advanced along it)
@@ -137,4 +138,24 @@ export function classifyScrambleMove(
   const kind: ScrambleMoveKind = head.length < prevHeadLen ? 'progress' : 'error';
 
   return { kind, nextRemaining, nextDone, corrections: head, correctionActive: true };
+}
+
+/**
+ * The wrong-turn / half-turn cue to display for a classified turn.
+ *
+ * The cue tracks *whether a correction is still owed*, not just the `kind` of the single
+ * turn that produced this classification. So after two wrong turns, doing one correcting
+ * turn (which classifies `progress` because it shrank the correction burden) still keeps
+ * the red cue up — with the *remaining* owed moves — until the guide is fully back on the
+ * path. Without this, a half-fixed mistake left the owed undo sitting unstyled in the
+ * ribbon with no explanation ("errors silently handled").
+ *
+ * `partial` (a same-face wrong-direction turn) always shows its amber "keep turning" cue.
+ */
+export function feedbackForClassification(cls: ScrambleClassification): ScrambleFeedback | null {
+  if (cls.kind === 'partial') return { kind: 'partial', corrections: cls.corrections };
+  if (cls.correctionActive && cls.corrections.length > 0) {
+    return { kind: 'error', corrections: cls.corrections };
+  }
+  return null;
 }

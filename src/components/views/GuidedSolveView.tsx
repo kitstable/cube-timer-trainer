@@ -7,9 +7,15 @@ import { useCubeStore } from '../../store/useCubeStore';
 import { useAppStore } from '../../store/useAppStore';
 import { useSolverWorker } from '../../hooks/useSolverWorker';
 import { evaluateCFOPFromPattern } from '../../utils/phaseDetector';
-import { classifyScrambleMove } from '../../utils/scrambleTracker';
+import { classifyScrambleMove, feedbackForClassification } from '../../utils/scrambleTracker';
 import { createScramblePartialGate, type ScramblePartialGate } from '../../utils/scramblePartialGate';
 import { relabelMoveZ2, toZ2DisplayAlg, isAllFaceTurns } from '../../utils/kpuzzleHelper';
+import {
+  trackFeedbackPanelClass,
+  trackFeedbackBadgeClass,
+  trackFeedbackChipClass,
+  TrackFeedbackMessage,
+} from '../ui/TrackFeedback';
 import { saveSolve } from '../../db/repository';
 import { PHASE_DISPLAY_NAMES, ALL_F2L_SLOTS, getMoveDescription, SCRAMBLE_PARTIAL_GRACE_MS } from '../../utils/constants';
 import type { CFOPPhase, F2LSlotId, MoveHint, ScrambleFeedback, TechniqueTier, NotationMode } from '../../types/cube';
@@ -211,13 +217,7 @@ export const GuidedSolveView: React.FC = () => {
       planCorrectionRef.current = cls.correctionActive;
       setPlanRemaining(cls.nextRemaining);
       setPlanDone(cls.nextDone);
-      setFeedback(
-        cls.kind === 'error'
-          ? { kind: 'error', corrections: cls.corrections }
-          : cls.kind === 'partial'
-          ? { kind: 'partial', corrections: cls.corrections }
-          : null
-      );
+      setFeedback(feedbackForClassification(cls));
     },
     [fetchHintForCurrentPhase]
   );
@@ -504,13 +504,9 @@ export const GuidedSolveView: React.FC = () => {
       {/* LEFT COLUMN: Large 3D Visualizer & PhaseRail */}
       <div className="lg:col-span-5 xl:col-span-5 flex flex-col justify-between mb-3 lg:mb-0 gap-3">
         <div
-          className={`bg-[var(--surface)] border border-[var(--border)] rounded-2xl p-3 flex items-center justify-center min-h-[225px] lg:min-h-[420px] lg:flex-1 relative transition-shadow duration-300 ${
-            feedback?.kind === 'error'
-              ? 'ring-2 ring-[var(--red)] shadow-[0_0_0_4px_rgba(200,16,46,0.28)]'
-              : feedback?.kind === 'partial'
-              ? 'ring-2 ring-[var(--orange)]'
-              : ''
-          }`}
+          className={`bg-[var(--surface)] border border-[var(--border)] rounded-2xl p-3 flex items-center justify-center min-h-[225px] lg:min-h-[420px] lg:flex-1 relative transition-shadow duration-300 ${trackFeedbackPanelClass(
+            feedback?.kind ?? null
+          )}`}
         >
           {isCalculating && !connected ? (
             <div className="flex flex-col items-center justify-center gap-2 text-sm text-[var(--text-muted)] font-heading">
@@ -592,25 +588,15 @@ export const GuidedSolveView: React.FC = () => {
           ) : hasValidMoves && currentExpectedMove ? (
             <div className="flex items-center gap-3">
               <div
-                className={`font-mono text-2xl lg:text-3xl font-bold px-3 py-1.5 rounded-xl shadow-xs shrink-0 min-w-[58px] text-center border transition-colors ${
-                  feedback?.kind === 'error'
-                    ? 'bg-[var(--red)]/15 text-[var(--red)] border-[var(--red)]/40'
-                    : feedback?.kind === 'partial'
-                    ? 'bg-[var(--orange)]/15 text-[var(--orange)] border-[var(--orange)]/40'
-                    : 'bg-[var(--surface-2)] text-[var(--white)] border-[var(--border)]'
-                }`}
+                className={`font-mono text-2xl lg:text-3xl font-bold px-3 py-1.5 rounded-xl shadow-xs shrink-0 min-w-[58px] text-center border transition-colors ${trackFeedbackBadgeClass(
+                  feedback?.kind ?? null
+                )}`}
               >
                 {currentExpectedMove}
               </div>
               <div className="min-w-0 flex-1">
-                {feedback?.kind === 'error' ? (
-                  <div className="text-xs font-semibold text-[var(--red)]">
-                    Wrong turn — do {feedback.corrections.join(' ')} to get back on track
-                  </div>
-                ) : feedback?.kind === 'partial' ? (
-                  <div className="text-xs font-semibold text-[var(--orange)]">
-                    Half turn — keep turning this face to {feedback.corrections.join(' ')}
-                  </div>
+                {feedback ? (
+                  <TrackFeedbackMessage feedback={feedback} />
                 ) : (
                   <div className="text-xs lg:text-sm font-semibold text-[var(--text)] truncate">
                     {getMoveDescription(currentExpectedMove)}
@@ -685,10 +671,8 @@ export const GuidedSolveView: React.FC = () => {
                       className={`px-2 py-1 rounded-md text-xs font-mono transition-all ${connected ? '' : 'cursor-pointer'} ${
                         entry.done
                           ? 'text-[var(--text-muted)] opacity-40 line-through bg-transparent'
-                          : isCorrection && feedback?.kind === 'error'
-                          ? 'bg-[var(--red)]/15 text-[var(--red)] ring-1 ring-[var(--red)]/40 font-bold'
                           : isCorrection
-                          ? 'bg-[var(--orange)]/15 text-[var(--orange)] ring-1 ring-[var(--orange)]/40 font-bold'
+                          ? trackFeedbackChipClass(feedback?.kind ?? null)
                           : isCurrent
                           ? 'bg-[var(--white)] text-[var(--bg)] font-bold shadow-xs scale-105 ring-2 ring-[var(--white)]/30'
                           : 'text-[var(--text)] bg-[var(--surface-2)] hover:bg-[var(--border)]'

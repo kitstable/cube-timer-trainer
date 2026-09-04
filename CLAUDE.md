@@ -172,11 +172,18 @@ Both are on `claude/smart-cube-connection-state-rs2s9a`.
    flash the amber "partial" cue for the tens of ms until the second landed.
    `src/utils/scramblePartialGate.ts` (pure, dependency-injected) now sits between the BLE
    event and `applyPhysicalTrackMove` in `useSmartCube.ts`: a turn that classifies
-   `partial` is *held* for `SCRAMBLE_PARTIAL_GRACE_MS` (800ms); a second turn in that window
-   commits the held one and processes the new one (a real double turn resolves to `progress`
-   with no amber frame), and the timer firing commits it (genuine mid-face stop → cue
-   shows). `applyMove`/`visualAlg` stay immediate — only the guide lags. `progress` /
-   `error` / `complete` are never deferred.
+   `partial` is *held* for `SCRAMBLE_PARTIAL_GRACE_MS` (800ms). A second turn in that window
+   **on the same face** (the real shape of a double — `R` then `R`) is *merged* with the
+   held one via `simplifyMoveSequence` and processed as a single move (`R2`), so the guide
+   never briefly renders the double as "one done, one to go" and never flashes the amber
+   frame; a same-face pair that cancels (`R` then `R'`) is dropped as a no-op wobble. A
+   second turn on a *different* face means the held one was a genuine mid-face stop — it's
+   committed (cue shows) and the new turn processed after it. The timer firing commits the
+   held move for the same reason. `applyMove`/`visualAlg` stay immediate — only the guide
+   lags. `progress` / `error` / `complete` are never deferred. (The earlier version
+   committed the held partial *separately* before the second turn, which — because zustand's
+   `useSyncExternalStore` re-renders synchronously per `set` — briefly painted the half-done
+   state before the double resolved. The merge removes that intermediate `set` entirely.)
 
 5. **Timed Solve: no spurious autostart, real inspection, and CFOP phase detection that
    actually works with a connected cube.**
@@ -248,6 +255,30 @@ Solve rewrite (spec §8) is still pending.
     glanced within 2.5s. `TrainingView` never faded, so this also aligns the two. The
     identical local-state fade in `GuidedSolveView` (connected walkthrough) was removed the
     same way. `clearTrackFeedback` is still the action for explicit resets.
+  - **One shared visual language — `src/components/ui/TrackFeedback.tsx`.** The wrong-turn /
+    half-turn cue is rendered identically by all three connected move-guide surfaces
+    (Scramble, Guided Solve, Training setup): `error` → red panel ring + glow, owed undo
+    move(s) red in the ribbon; `partial` → amber (`--orange`) panel ring + glow, the move to
+    finish amber in the ribbon; plus a fixed one-line message ("Wrong turn — do X to get
+    back on track" / "Half turn — keep turning this face to X"). `trackFeedbackPanelClass` /
+    `trackFeedbackBadgeClass` / `trackFeedbackChipClass` / `<TrackFeedbackMessage>` are the
+    single source — the views had each hand-rolled these Tailwind ternaries and drifted
+    (Training rendered `error` corrections amber, skipped the glow and the message). Don't
+    re-inline them. The "wait a small moment before the half-turn cue" is the
+    `scramblePartialGate` grace window (Scramble/Training via `useSmartCube`, Guided via its
+    own `partialGateRef`) — not a render concern.
+  - **The cue tracks the outstanding correction, not the last turn's `kind` —
+    `feedbackForClassification(cls)` in `scrambleTracker.ts`.** `classifyScrambleMove` reports
+    a *correcting* turn (one that shrinks the owed-correction burden) as `progress`, even
+    while corrections are still owed. Mapping the cue straight off `kind` (the old inline
+    `res.kind === 'error' ? … : res.kind === 'partial' ? …`) therefore made the red cue
+    vanish the instant you started undoing a two-move mistake — the still-owed undo just sat
+    unstyled in the ribbon ("errors silently handled"). `feedbackForClassification` returns
+    the `error` cue whenever `cls.correctionActive && cls.corrections.length > 0`, so it
+    stays up (showing the *remaining* owed moves) until the guide is fully back on the path.
+    Used by both `useAppStore.applyPhysicalTrackMove` (Scramble/Training) and
+    `GuidedSolveView`'s `applyPlanMove`. `ignored` turns still early-return without touching
+    the cue.
 - **`src/solver/trainingScrambleGenerator.ts`** (worker, `GENERATE_TRAINING_SCRAMBLE`) —
   `generateCaseScramble(solvedPostZ2, precomputedCase, opts)`: builds the case state
   (`solvedPostZ2 · invSimplifiedAlg`), random AUF, then the **exact `solvePhasePrefix` z2
@@ -336,7 +367,12 @@ connected **setup-scramble** ribbon (`trackDoneMoves` / `trackRemainingMoves`, o
 `useSmartCube` / `useAppStore` and left in the raw frame so physical raw turns still match the
 target): `TrainingView` relabels those tokens **for render only** (`dispTrackMove`, gated on
 `connectedYellowUp` and not the Cross drill's `frame: 'raw'`) so the walked-through setup
-matches the yellow-up picture. Tracking, `trackTargetMoves`, and `useSmartCube` are untouched.
+matches the yellow-up picture. `trackFeedback.corrections` are in that same raw frame, so the
+`<TrackFeedbackMessage>` under the ribbon relabels its corrections through `dispTrackMove` too
+— otherwise the message said "do L'" while the ribbon (relabeled) showed "R" for the same
+owed undo. Tracking, `trackTargetMoves`, and `useSmartCube` are untouched. (Guided Solve
+needs no such relabel: with `connectedYellowUp` its whole plan array is already kept post-z2,
+so message + ribbon + 3D are one frame.)
 
 The **no-cube** solve/practice paths render **last-layer-up** (`setupAlg="z2"`), because their
 move streams are generated in the app's post-z2 frame (see the post-z2 gotchas above):

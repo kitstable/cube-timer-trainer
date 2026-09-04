@@ -28,24 +28,50 @@ describe('createScramblePartialGate', () => {
     expect(committed).toEqual(['R']);
   });
 
-  it('flushes the held move before the new one when a second turn arrives in-window', () => {
-    // Models the tracker: the first R is a same-face partial; once it's committed the
-    // second R completes the double turn and reads as progress.
+  it('merges a same-face second turn into one move (a real R2), never showing the half state', () => {
+    // The first R is a same-face partial; a second R before the timer is the other half of
+    // a physical R2. The gate merges them and commits `R2` once — the tracker never sees an
+    // interim "one done, one to go" state.
     const committed: string[] = [];
     const gate = createScramblePartialGate({
-      classify: () => (committed.length === 0 ? 'partial' : 'progress'),
+      classify: (m) => (m === 'R' ? 'partial' : 'progress'),
       commit: (move) => committed.push(move),
       graceMs: 400,
     });
 
     gate.feed('R'); // held
     gate.feed('R'); // second half of a real R2 — arrives before the timer
-
-    expect(committed).toEqual(['R', 'R']);
+    expect(committed).toEqual(['R2']);
 
     // Timer must not double-commit.
     vi.advanceTimersByTime(400);
-    expect(committed).toEqual(['R', 'R']);
+    expect(committed).toEqual(['R2']);
+  });
+
+  it('drops a same-face pair that cancels (R then R′) as a no-op wobble', () => {
+    const committed: string[] = [];
+    const gate = createScramblePartialGate({
+      classify: () => 'partial',
+      commit: (move) => committed.push(move),
+      graceMs: 400,
+    });
+    gate.feed('R'); // held
+    gate.feed("R'"); // turned straight back
+    expect(committed).toEqual([]);
+    vi.advanceTimersByTime(400);
+    expect(committed).toEqual([]);
+  });
+
+  it('commits a held partial then the new turn when the second turn is a different face', () => {
+    const committed: string[] = [];
+    const gate = createScramblePartialGate({
+      classify: (m) => (m === 'R' ? 'partial' : 'error'),
+      commit: (move) => committed.push(move),
+      graceMs: 400,
+    });
+    gate.feed('R'); // held (mid-face stop)
+    gate.feed('U'); // moved to a different face — genuine mistake
+    expect(committed).toEqual(['R', 'U']);
   });
 
   it('does not defer progress / error / complete / ignored', () => {

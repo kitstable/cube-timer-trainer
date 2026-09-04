@@ -31,6 +31,11 @@ import {
   type ComboStep,
   type TwoLookDrillId,
 } from '../../solver/twoLook';
+import {
+  trackFeedbackPanelClass,
+  trackFeedbackChipClass,
+  TrackFeedbackMessage,
+} from '../ui/TrackFeedback';
 import { saveTrainingRep } from '../../db/repository';
 import type { TrainingPhase } from '../../types/db';
 import { useIsDesktop } from '../../hooks/useMediaQuery';
@@ -541,13 +546,9 @@ export const TrainingView: React.FC = () => {
       {/* LEFT: 3D view */}
       <div className="lg:col-span-5 flex flex-col gap-3 mb-3 lg:mb-0">
         <div
-          className={`bg-[var(--surface)] border border-[var(--border)] rounded-2xl p-3 flex items-center justify-center min-h-[220px] lg:min-h-[400px] lg:flex-1 relative transition-shadow ${
-            feedbackKind === 'error'
-              ? 'ring-2 ring-[var(--red)]'
-              : feedbackKind === 'partial'
-              ? 'ring-2 ring-[var(--orange)]'
-              : ''
-          }`}
+          className={`bg-[var(--surface)] border border-[var(--border)] rounded-2xl p-3 flex items-center justify-center min-h-[220px] lg:min-h-[400px] lg:flex-1 relative transition-shadow duration-300 ${trackFeedbackPanelClass(
+            feedbackKind
+          )}`}
         >
           <TwistyPlayerWrapper setupAlg={setupAlg} alg={viewAlg} tempoScale={2.5} height={cubeHeight} />
           <div className="absolute top-3 left-3 px-2.5 py-1 rounded-md bg-[var(--surface-2)]/90 border border-[var(--border)] text-xs font-mono text-[var(--text-muted)]">
@@ -719,20 +720,23 @@ export const TrainingView: React.FC = () => {
                         {dispTrackMove(m)}
                       </span>
                     ))}
-                    {trackRemainingMoves.map((m, i) => (
-                      <span
-                        key={`r${i}`}
-                        className={`px-2 py-1 rounded-md text-xs ${
-                          i === 0 && !feedbackKind
-                            ? 'bg-[var(--white)] text-[var(--bg)] font-bold'
-                            : feedbackKind && i < (trackFeedback?.corrections.length ?? 0)
-                            ? 'bg-[var(--orange)]/15 text-[var(--orange)] font-bold'
-                            : 'bg-[var(--surface-2)] text-[var(--text)]'
-                        }`}
-                      >
-                        {dispTrackMove(m)}
-                      </span>
-                    ))}
+                    {trackRemainingMoves.map((m, i) => {
+                      const isCorrection = !!feedbackKind && i < (trackFeedback?.corrections.length ?? 0);
+                      return (
+                        <span
+                          key={`r${i}`}
+                          className={`px-2 py-1 rounded-md text-xs ${
+                            isCorrection
+                              ? trackFeedbackChipClass(feedbackKind)
+                              : i === 0 && !feedbackKind
+                              ? 'bg-[var(--white)] text-[var(--bg)] font-bold'
+                              : 'bg-[var(--surface-2)] text-[var(--text)]'
+                          }`}
+                        >
+                          {dispTrackMove(m)}
+                        </span>
+                      );
+                    })}
                   </>
                 ) : (
                   rep.scrambleView.map((m, i) => (
@@ -751,6 +755,21 @@ export const TrainingView: React.FC = () => {
                     </button>
                   ))
                 )}
+              </div>
+            )}
+
+            {connected && trackFeedback && (
+              <div className="text-center">
+                {/* The tracker + `trackFeedback.corrections` live in the raw white-up frame;
+                    with the yellow-up 3D view on, the ribbon relabels each token for display
+                    (`dispTrackMove`) — the message has to match it. */}
+                <TrackFeedbackMessage
+                  feedback={
+                    yellowUpTrackDisplay
+                      ? { ...trackFeedback, corrections: trackFeedback.corrections.map(dispTrackMove) }
+                      : trackFeedback
+                  }
+                />
               </div>
             )}
 

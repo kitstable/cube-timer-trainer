@@ -62,6 +62,24 @@ describe('useAppStore — physical move-sequence tracking', () => {
     expect(s.trackRemainingMoves).toEqual(S);
   });
 
+  it('keeps error feedback up while a two-move mistake is only half-corrected', () => {
+    useAppStore.getState().setScramble("L' D F2", S);
+    useAppStore.getState().applyPhysicalTrackMove('R'); // wrong
+    useAppStore.getState().applyPhysicalTrackMove('F'); // wrong again
+    let s = useAppStore.getState();
+    expect(s.trackFeedback).toEqual({ kind: 'error', corrections: ["F'", "R'"] });
+
+    useAppStore.getState().applyPhysicalTrackMove("F'"); // undo one — still owes R'
+    s = useAppStore.getState();
+    expect(s.trackFeedback).toEqual({ kind: 'error', corrections: ["R'"] });
+    expect(s.trackCorrectionActive).toBe(true);
+
+    useAppStore.getState().applyPhysicalTrackMove("R'"); // back on track
+    s = useAppStore.getState();
+    expect(s.trackFeedback).toBeNull();
+    expect(s.trackCorrectionActive).toBe(false);
+  });
+
   it('a rotation is ignored and leaves state untouched', () => {
     useAppStore.getState().setScramble("L' D F2", S);
     useAppStore.getState().applyPhysicalTrackMove('y');

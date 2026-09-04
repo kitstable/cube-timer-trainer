@@ -6,6 +6,12 @@ import { useCubeStore } from '../../store/useCubeStore';
 import { useSolverWorker } from '../../hooks/useSolverWorker';
 import { getMoveDescription } from '../../utils/constants';
 import { isPatternSolved } from '../../utils/kpuzzleHelper';
+import {
+  trackFeedbackPanelClass,
+  trackFeedbackBadgeClass,
+  trackFeedbackChipClass,
+  TrackFeedbackMessage,
+} from '../ui/TrackFeedback';
 import { useIsDesktop } from '../../hooks/useMediaQuery';
 
 export const ScrambleView: React.FC = () => {
@@ -150,13 +156,9 @@ export const ScrambleView: React.FC = () => {
       {/* LEFT COLUMN: Large 3D Visualizer Stage */}
       <div className="lg:col-span-5 xl:col-span-5 flex flex-col justify-between mb-3 lg:mb-0">
         <div
-          className={`bg-[var(--surface)] border border-[var(--border)] rounded-2xl p-3 flex flex-col items-center justify-center min-h-[225px] lg:min-h-[440px] lg:flex-1 relative transition-shadow duration-300 ${
-            feedbackKind === 'error'
-              ? 'ring-2 ring-[var(--red)] shadow-[0_0_0_4px_rgba(200,16,46,0.28)]'
-              : feedbackKind === 'partial'
-              ? 'ring-2 ring-[var(--orange)]'
-              : ''
-          }`}
+          className={`bg-[var(--surface)] border border-[var(--border)] rounded-2xl p-3 flex flex-col items-center justify-center min-h-[225px] lg:min-h-[440px] lg:flex-1 relative transition-shadow duration-300 ${trackFeedbackPanelClass(
+            feedbackKind
+          )}`}
         >
           {currentScramble ? (
             <TwistyPlayerWrapper
@@ -246,25 +248,15 @@ export const ScrambleView: React.FC = () => {
           ) : (
             <div className="flex items-center gap-3">
               <div
-                className={`font-mono text-2xl lg:text-3xl font-bold px-3 py-1.5 rounded-xl shadow-xs shrink-0 min-w-[58px] text-center border transition-colors ${
-                  feedbackKind === 'error'
-                    ? 'bg-[var(--red)]/15 text-[var(--red)] border-[var(--red)]/40'
-                    : feedbackKind === 'partial'
-                    ? 'bg-[var(--orange)]/15 text-[var(--orange)] border-[var(--orange)]/40'
-                    : 'bg-[var(--surface-2)] text-[var(--white)] border-[var(--border)]'
-                }`}
+                className={`font-mono text-2xl lg:text-3xl font-bold px-3 py-1.5 rounded-xl shadow-xs shrink-0 min-w-[58px] text-center border transition-colors ${trackFeedbackBadgeClass(
+                  feedbackKind
+                )}`}
               >
                 {currentExpectedMove}
               </div>
               <div className="min-w-0 flex-1">
-                {feedbackKind === 'error' ? (
-                  <div className="text-xs font-semibold text-[var(--red)]">
-                    Wrong turn — do {trackFeedback?.corrections.join(' ')} to get back on track
-                  </div>
-                ) : feedbackKind === 'partial' ? (
-                  <div className="text-xs font-semibold text-[var(--orange)]">
-                    Half done — keep turning this face to {trackFeedback?.corrections.join(' ')}
-                  </div>
+                {trackFeedback ? (
+                  <TrackFeedbackMessage feedback={trackFeedback} />
                 ) : (
                   <div className="text-xs lg:text-sm font-semibold text-[var(--text)] truncate">
                     {getMoveDescription(currentExpectedMove || '')}
@@ -401,10 +393,8 @@ export const ScrambleView: React.FC = () => {
                     <span
                       key={`rem-${idx}`}
                       className={`px-2 py-1 rounded-md text-xs font-mono transition-colors ${
-                        isCorrection && feedbackKind === 'error'
-                          ? 'bg-[var(--red)]/15 text-[var(--red)] ring-1 ring-[var(--red)]/40 font-bold'
-                          : isCorrection
-                          ? 'bg-[var(--orange)]/15 text-[var(--orange)] ring-1 ring-[var(--orange)]/40 font-bold'
+                        isCorrection
+                          ? trackFeedbackChipClass(feedbackKind)
                           : isNext
                           ? 'bg-[var(--white)] text-[var(--bg)] font-bold shadow-xs scale-105 ring-2 ring-[var(--white)]/30'
                           : 'text-[var(--text)] bg-[var(--surface-2)]'

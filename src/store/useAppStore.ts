@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import type { AppMode, TechniqueTier, NotationMode, ScrambleFeedback } from '../types/cube';
 import type { TrainingPhase } from '../types/db';
-import { classifyScrambleMove } from '../utils/scrambleTracker';
+import { classifyScrambleMove, feedbackForClassification } from '../utils/scrambleTracker';
 
 /**
  * The one persisted bit of app state. Everything else here is session-scoped; this needs to
@@ -171,18 +171,11 @@ export const useAppStore = create<AppStoreState>((set) => ({
       );
       if (res.kind === 'ignored') return {};
 
-      const feedback: ScrambleFeedback | null =
-        res.kind === 'error'
-          ? { kind: 'error', corrections: res.corrections }
-          : res.kind === 'partial'
-          ? { kind: 'partial', corrections: res.corrections }
-          : null;
-
       return {
         trackDoneMoves: res.nextDone,
         trackRemainingMoves: res.nextRemaining,
         trackCorrectionActive: res.correctionActive,
-        trackFeedback: feedback,
+        trackFeedback: feedbackForClassification(res),
       };
     }),
   clearTrackFeedback: () => set({ trackFeedback: null }),
