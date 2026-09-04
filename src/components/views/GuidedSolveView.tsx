@@ -207,9 +207,9 @@ export const GuidedSolveView: React.FC = () => {
       setPlanDone(cls.nextDone);
       setFeedback(
         cls.kind === 'error'
-          ? { kind: 'error', corrections: cls.corrections, at: Date.now() }
+          ? { kind: 'error', corrections: cls.corrections }
           : cls.kind === 'partial'
-          ? { kind: 'partial', corrections: cls.corrections, at: Date.now() }
+          ? { kind: 'partial', corrections: cls.corrections }
           : null
       );
     },

@@ -142,9 +142,9 @@ export const useAppStore = create<AppStoreState>((set) => ({
 
       const feedback: ScrambleFeedback | null =
         res.kind === 'error'
-          ? { kind: 'error', corrections: res.corrections, at: Date.now() }
+          ? { kind: 'error', corrections: res.corrections }
           : res.kind === 'partial'
-          ? { kind: 'partial', corrections: res.corrections, at: Date.now() }
+          ? { kind: 'partial', corrections: res.corrections }
           : null;
 
       return {

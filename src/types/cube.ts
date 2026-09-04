@@ -53,8 +53,6 @@ export interface ScrambleFeedback {
   kind: 'error' | 'partial';
   /** Leading remaining-ribbon tokens to highlight (red for error, amber for partial). */
   corrections: string[];
-  /** `Date.now()` when raised — drives the auto-fade timer. */
-  at: number;
 }
 
 export interface MoveHint {
