@@ -237,6 +237,17 @@ Solve rewrite (spec §8) is still pending.
   `TRACKING_MODES = ['scramble', 'training']`. `scrambleTracker.ts` / `scramblePartialGate.ts`
   themselves were already sequence-agnostic and are unchanged. Scramble mode behaviour is
   identical — it just sets `trackTargetMoves` = its WCA scramble.
+  - **Wrong-turn cue is not time-faded (fixed).** `trackFeedback` (the amber/red
+    half-turn / off-path cue) mirrors live tracker state — while it's set, the owed
+    correction move(s) lead `trackRemainingMoves`. It is cleared *only* by
+    `applyPhysicalTrackMove`: the next progressing turn clears it, a fresh off-path / half
+    turn replaces it, a rotation (`ignored`) leaves it. `ScrambleView` used to also run a
+    2.5s `setTimeout(clearTrackFeedback)` — with a connected cube that desynced the cue
+    from the tracker: after the fade the still-owed undo sat in the ribbon styled as a
+    normal scramble move, and the same wrong turn looked different depending on whether you
+    glanced within 2.5s. `TrainingView` never faded, so this also aligns the two. The
+    identical local-state fade in `GuidedSolveView` (connected walkthrough) was removed the
+    same way. `clearTrackFeedback` is still the action for explicit resets.
 - **`src/solver/trainingScrambleGenerator.ts`** (worker, `GENERATE_TRAINING_SCRAMBLE`) —
   `generateCaseScramble(solvedPostZ2, precomputedCase, opts)`: builds the case state
   (`solvedPostZ2 · invSimplifiedAlg`), random AUF, then the **exact `solvePhasePrefix` z2
@@ -319,10 +330,10 @@ live cube).
   each new physical turn (read from `moveHistory` deltas) is fed — relabelled to the raw frame
   via `relabelMoveZ2` — into the pure `classifyScrambleMove` tracker (`planRemaining` /
   `planDone`, same tracker the Scramble guide uses, so half-turns / commuting moves / doubles
-  are handled). A **wrong or half turn keeps the current hint** — flashes the red/amber cue
-  (`feedback` state, auto-fades after 2.5s, same as `ScrambleView`'s `trackFeedback`) and
-  `classifyScrambleMove` prepends correction move(s) to `planRemaining` so the guide leads you
-  back on track. Only **`complete`** (you finished the step) triggers
+  are handled). A **wrong or half turn keeps the current hint** — raises the red/amber cue
+  (`feedback` state, same model as `ScrambleView`'s `trackFeedback`; see "Wrong-turn cue is
+  not time-faded" below) and `classifyScrambleMove` prepends correction move(s) to
+  `planRemaining` so the guide leads you back on track. Only **`complete`** (you finished the step) triggers
   `fetchHintForCurrentPhase()` — a fresh hint from the real state. So it's self-correcting,
   matches the Scramble guide's wrong-turn theme, and does **not** churn a brand-new alg on
   every turn (two earlier versions did — recomputing the optimal cross on each face turn felt
@@ -339,6 +350,16 @@ live cube).
     recompute finishes and flushes any turns made during the window, and has a
     history-shrinkage guard (`hist.length < consumedMovesRef.current` → header resync/calibrate,
     refetch fresh).
+  - **Half-turn gate (parity with the Scramble guide).** Each fresh turn is fed through a
+    per-view `createScramblePartialGate` instance (`partialGateRef`), not classified inline —
+    without it a physical `R2` (two `R` events) flashed the amber "half turn" cue for the
+    ~50ms between its halves. `commit` runs through `applyPlanMoveRef` (re-pointed every
+    render) so the deferred/held move still commits against the current
+    `fetchHintForCurrentPhase` closure. The consuming loop `break`s when
+    `recomputingRef.current` flips (a `complete` fired a refetch synchronously). The gate is
+    `reset()` on every fresh hint, on history-shrink, and on disconnect / unmount so a held
+    grace timer can't fire into a stale plan. This also makes a deliberate wrong-*direction*
+    turn defer ~800ms before showing the `partial` cue, exactly like Scramble.
   - Phase / solved-slots for the UI come from `evaluateCFOPFromPattern(hintPattern)` inside
     `fetchHintForCurrentPhase` (updated at step boundaries), not `useCubeStore.monotonicPhase`
     (raw-frame, wrong here). Manual stepping is hidden when connected; the ribbon shows

@@ -23,7 +23,6 @@ export const ScrambleView: React.FC = () => {
     stepBackScrambleProgress,
     resetScrambleProgress,
     completeScrambleProgress,
-    clearTrackFeedback,
     resetPhysicalTrack,
   } = useAppStore();
 
@@ -108,12 +107,12 @@ export const ScrambleView: React.FC = () => {
   const cubeAlg = physicalVisual ? visualAlg : currentProgressiveAlg;
   const cubeHeight = isDesktop ? 380 : 215;
 
-  // Auto-fade the wrong/half-done cue if the user pauses.
-  useEffect(() => {
-    if (!trackFeedback) return;
-    const t = setTimeout(() => clearTrackFeedback(), 2500);
-    return () => clearTimeout(t);
-  }, [trackFeedback?.at, clearTrackFeedback]);
+  // The wrong-turn / half-done cue is NOT auto-faded: it mirrors live tracker state
+  // (`trackRemainingMoves` still leads with the owed correction), so `applyPhysicalTrackMove`
+  // is the only thing that clears it — the next progressing turn does, an off-path or
+  // half turn replaces it, a rotation leaves it be. A timed fade used to desync the cue
+  // from the tracker, so an owed undo would silently sit in the ribbon as a normal move.
+  // (Matches TrainingView, which shares this tracker and never faded.)
 
   const handleToggleAutoAdvance = () => {
     if (isComplete) {

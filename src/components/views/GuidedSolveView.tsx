@@ -8,9 +8,10 @@ import { useAppStore } from '../../store/useAppStore';
 import { useSolverWorker } from '../../hooks/useSolverWorker';
 import { evaluateCFOPFromPattern } from '../../utils/phaseDetector';
 import { classifyScrambleMove } from '../../utils/scrambleTracker';
+import { createScramblePartialGate, type ScramblePartialGate } from '../../utils/scramblePartialGate';
 import { relabelMoveZ2 } from '../../utils/kpuzzleHelper';
 import { saveSolve } from '../../db/repository';
-import { PHASE_DISPLAY_NAMES, ALL_F2L_SLOTS, getMoveDescription } from '../../utils/constants';
+import { PHASE_DISPLAY_NAMES, ALL_F2L_SLOTS, getMoveDescription, SCRAMBLE_PARTIAL_GRACE_MS } from '../../utils/constants';
 import type { CFOPPhase, F2LSlotId, MoveHint, ScrambleFeedback, TechniqueTier, NotationMode } from '../../types/cube';
 import { useIsDesktop } from '../../hooks/useMediaQuery';
 
@@ -71,6 +72,14 @@ export const GuidedSolveView: React.FC = () => {
   const planCorrectionRef = useRef<boolean>(false);
   const consumedMovesRef = useRef<number>(0);
   const recomputingRef = useRef<boolean>(false);
+  // Same half-turn deferral the Scramble guide uses: a physical `R2` arrives as two `R`
+  // events, so the first would otherwise flash the amber "half turn" cue for ~50ms until
+  // the second lands. The gate holds a `partial` for the grace window; a second turn in
+  // that window commits the held one and a clean double resolves to `progress` with no
+  // flash. `applyPlanMoveRef` is re-pointed each render so the gate always commits through
+  // the current `fetchHintForCurrentPhase` closure.
+  const partialGateRef = useRef<ScramblePartialGate | null>(null);
+  const applyPlanMoveRef = useRef<(mv: string) => void>(() => {});
 
   /** The pattern the hint engine should read, always in the app's post-z2 frame. */
   const getHintPattern = useCallback(() => {
@@ -127,6 +136,7 @@ export const GuidedSolveView: React.FC = () => {
           planRawRef.current = raw;
           planDoneRef.current = [];
           planCorrectionRef.current = false;
+          partialGateRef.current?.reset(); // drop any half-turn held against the old plan
           setPlanRemaining(raw);
           setPlanDone([]);
           consumedMovesRef.current = moveCountAtFetch;
@@ -174,37 +184,20 @@ export const GuidedSolveView: React.FC = () => {
     if (isReady && !connected && pattern && !currentHint) fetchHintForCurrentPhase();
   }, [isReady, connected, pattern, currentHint, fetchHintForCurrentPhase]);
 
-  // Connected: consume new physical turns and walk through the current hint. Each turn is
-  // classified against the plan by the pure `classifyScrambleMove` (the Scramble guide's
-  // tracker) — a match ticks a move off; a wrong / half turn keeps the plan, flashes a cue
-  // and prepends correction move(s) so the guide leads you back on track (not a new alg).
-  // Only *finishing* the step (`complete`) recomputes the next hint.
-  // `isCalculating` is a dep so this re-runs the moment a recompute finishes — any turns made
-  // during the async `findHint` window (when this effect early-returns) are then flushed and
-  // classified against the fresh plan rather than sitting unprocessed until the next turn.
-  useEffect(() => {
-    if (!connected || !isReady || recomputingRef.current) return;
-    const hist = useCubeStore.getState().moveHistory;
-    if (hist.length < consumedMovesRef.current) {
-      // History shrank (header resync / calibrate) — plan is stale, start fresh.
-      consumedMovesRef.current = hist.length;
-      fetchHintForCurrentPhase();
-      return;
-    }
-    if (hist.length === consumedMovesRef.current) return;
-    const fresh = hist.slice(consumedMovesRef.current).map((m) => m.move);
-    consumedMovesRef.current = hist.length;
-
-    if (planRawRef.current.length === 0) {
-      fetchHintForCurrentPhase();
-      return;
-    }
-
-    for (const mv of fresh) {
+  // Commit one physical turn to the walkthrough plan. Classified by the pure
+  // `classifyScrambleMove` (the Scramble guide's tracker): a match ticks a move off; a
+  // wrong / half turn keeps the plan, raises the cue and prepends correction move(s) so the
+  // guide leads you back on track (not a new alg); a rotation is a no-op. Only *finishing*
+  // the step (`complete`) recomputes the next hint. The cue is NOT time-faded — this
+  // function is the only thing that changes it (progress/complete clear it, wrong/half
+  // replace it, rotation leaves it), so it can't drift out of sync with `planRemaining`.
+  const applyPlanMove = useCallback(
+    (mv: string) => {
       const cls = classifyScrambleMove(planRawRef.current, planDoneRef.current, mv, planCorrectionRef.current);
-      if (cls.kind === 'ignored') continue;
+      if (cls.kind === 'ignored') return;
       if (cls.kind === 'complete') {
         setFeedback(null);
+        partialGateRef.current?.reset();
         fetchHintForCurrentPhase();
         return;
       }
@@ -219,15 +212,58 @@ export const GuidedSolveView: React.FC = () => {
           ? { kind: 'partial', corrections: cls.corrections, at: Date.now() }
           : null
       );
+    },
+    [fetchHintForCurrentPhase]
+  );
+  applyPlanMoveRef.current = applyPlanMove;
+
+  if (partialGateRef.current === null) {
+    partialGateRef.current = createScramblePartialGate({
+      classify: (mv) =>
+        classifyScrambleMove(planRawRef.current, planDoneRef.current, mv, planCorrectionRef.current).kind,
+      commit: (mv) => applyPlanMoveRef.current(mv),
+      graceMs: SCRAMBLE_PARTIAL_GRACE_MS,
+    });
+  }
+
+  // Connected: consume new physical turns and walk through the current hint via the
+  // half-turn gate (so a double turn doesn't flash the "half turn" cue between its halves).
+  // `isCalculating` is a dep so this re-runs the moment a recompute finishes — any turns made
+  // during the async `findHint` window (when this effect early-returns) are then flushed and
+  // classified against the fresh plan rather than sitting unprocessed until the next turn.
+  useEffect(() => {
+    if (!connected || !isReady || recomputingRef.current) return;
+    const hist = useCubeStore.getState().moveHistory;
+    if (hist.length < consumedMovesRef.current) {
+      // History shrank (header resync / calibrate) — plan is stale, start fresh.
+      consumedMovesRef.current = hist.length;
+      partialGateRef.current?.reset();
+      fetchHintForCurrentPhase();
+      return;
+    }
+    if (hist.length === consumedMovesRef.current) return;
+    const fresh = hist.slice(consumedMovesRef.current).map((m) => m.move);
+    consumedMovesRef.current = hist.length;
+
+    if (planRawRef.current.length === 0) {
+      fetchHintForCurrentPhase();
+      return;
+    }
+
+    for (const mv of fresh) {
+      partialGateRef.current!.feed(mv);
+      // A `complete` synchronously kicked off a refetch (recomputingRef set before its
+      // first await) — stop; the rest of `fresh` is already folded into the new read.
+      if (recomputingRef.current) break;
     }
   }, [connected, isReady, physicalPattern, isCalculating, fetchHintForCurrentPhase]);
 
-  // Auto-fade the wrong/half-turn cue if the user pauses.
+  // Drop any held half-turn when the cube disconnects or the view unmounts, so its grace
+  // timer can't fire into a stale plan / unmounted component.
   useEffect(() => {
-    if (!feedback) return;
-    const t = setTimeout(() => setFeedback(null), 2500);
-    return () => clearTimeout(t);
-  }, [feedback]);
+    if (!connected) partialGateRef.current?.reset();
+    return () => partialGateRef.current?.reset();
+  }, [connected]);
 
   // Connected: track solve timing and save a `mode: 'guided'` Solve when the cube is solved.
   useEffect(() => {

@@ -70,6 +70,36 @@ describe('useAppStore — physical move-sequence tracking', () => {
     expect(s.trackRemainingMoves).toEqual(S);
   });
 
+  it('error feedback persists through an ignored move and only clears on progress', () => {
+    useAppStore.getState().setScramble("L' D F2", S);
+    useAppStore.getState().applyPhysicalTrackMove('R'); // wrong face → error, owes R'
+    useAppStore.getState().applyPhysicalTrackMove('y'); // rotation → ignored
+    let s = useAppStore.getState();
+    expect(s.trackFeedback?.kind).toBe('error');
+    expect(s.trackFeedback?.corrections).toEqual(["R'"]);
+    expect(s.trackCorrectionActive).toBe(true);
+    expect(s.trackRemainingMoves).toEqual(["R'", "L'", 'D', 'F2']);
+
+    useAppStore.getState().applyPhysicalTrackMove("R'"); // the correcting turn
+    s = useAppStore.getState();
+    expect(s.trackFeedback).toBeNull();
+    expect(s.trackCorrectionActive).toBe(false);
+  });
+
+  it('a half turn keeps its cue until the face is finished', () => {
+    const scramble = ['L2', 'D', 'F2'];
+    useAppStore.getState().setScramble('L2 D F2', scramble);
+    useAppStore.getState().applyPhysicalTrackMove("L'"); // half of L2 → partial
+    let s = useAppStore.getState();
+    expect(s.trackFeedback?.kind).toBe('partial');
+    expect(s.trackFeedback?.corrections).toEqual(["L'"]);
+
+    useAppStore.getState().applyPhysicalTrackMove("L'"); // finishes the L2
+    s = useAppStore.getState();
+    expect(s.trackFeedback).toBeNull();
+    expect(s.trackRemainingMoves).toEqual(['D', 'F2']);
+  });
+
   it('clearTrackFeedback and resetPhysicalTrack reset tracking', () => {
     useAppStore.getState().setScramble("L' D F2", S);
     useAppStore.getState().applyPhysicalTrackMove('R');
