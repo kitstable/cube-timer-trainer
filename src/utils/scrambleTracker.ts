@@ -21,8 +21,9 @@
 import {
   simplifyMoveSequence,
   invertMove,
-  sameFace,
   isSimpleFaceMove,
+  moveFace,
+  oppositeFace,
 } from './moveSimplifier';
 import type { ScrambleFeedback } from '../types/cube';
 
@@ -61,15 +62,6 @@ function commonSuffixLen(a: string[], b: string[]): number {
   return k;
 }
 
-/** True when `sub` appears in `seq` in order, allowing skipped elements. */
-function isSubsequence(sub: string[], seq: string[]): boolean {
-  let i = 0;
-  for (const s of seq) {
-    if (i < sub.length && sub[i] === s) i++;
-  }
-  return i === sub.length;
-}
-
 /** The correction prefix of `remaining` — the part that isn't a tail of the scramble. */
 function correctionHead(remaining: string[], scrambleMoves: string[]): string[] {
   const suffixLen = commonSuffixLen(remaining, scrambleMoves);
@@ -102,6 +94,15 @@ export function classifyScrambleMove(
     };
   }
 
+  // `prevRemaining` is "what's needed from here" — it already folds in any owed correction,
+  // since it's derived the same way `nextRemaining` is. Classification is judged only against
+  // its front: is this move on the immediate pivot's face, or (the one bounded reorder case)
+  // the face of the token right after it, when those two commute? Reasoning locally like this
+  // (rather than scanning `nextRemaining` for a literal-token match anywhere in the *original*
+  // `scrambleMoves` array) is what keeps a repeated face+direction elsewhere in the sequence
+  // from spuriously matching the wrong occurrence — see the tracker's test suite for the
+  // concrete repros this fixes.
+  const prevRemaining = remainingFor(scrambleMoves, doneMoves);
   const nextDone = [...doneMoves, move];
   const nextRemaining = remainingFor(scrambleMoves, nextDone);
 
@@ -109,35 +110,53 @@ export function classifyScrambleMove(
     return { kind: 'complete', nextRemaining, nextDone, corrections: [], correctionActive: false };
   }
 
-  // On the guided path — including doing adjacent commuting moves out of order
-  // (`R L` played as `L R`): the remaining moves are still a subset of the scramble.
-  if (isSubsequence(nextRemaining, scrambleMoves)) {
-    return { kind: 'progress', nextRemaining, nextDone, corrections: [], correctionActive: false };
+  const pivotFace = prevRemaining.length > 0 ? moveFace(prevRemaining[0]) : null;
+  const secondFace = prevRemaining.length > 1 ? moveFace(prevRemaining[1]) : null;
+  const movedFace = moveFace(move);
+
+  const onPivotFace = pivotFace !== null && movedFace === pivotFace;
+  // The one bounded reorder tolerance: the adjacent commuting pair played out of order
+  // (`R L` done as `L R`) — never an unbounded scan of the rest of the sequence.
+  const onCommutingSecondFace =
+    !onPivotFace &&
+    pivotFace !== null &&
+    secondFace !== null &&
+    movedFace === secondFace &&
+    oppositeFace(pivotFace) === secondFace;
+
+  // Does the face just turned still have a residual amount owed at the front of what's left?
+  // (E.g. the first quarter of a double: `nextRemaining[0]` is still on that same face.)
+  const residualSameFace = movedFace !== null && moveFace(nextRemaining[0]) === movedFace;
+
+  if (onPivotFace && !correctionActive) {
+    return residualSameFace
+      ? { kind: 'partial', nextRemaining, nextDone, corrections: [nextRemaining[0]], correctionActive: false }
+      : { kind: 'progress', nextRemaining, nextDone, corrections: [], correctionActive: false };
   }
 
-  const suffixLen = commonSuffixLen(nextRemaining, scrambleMoves);
-  const head = nextRemaining.slice(0, nextRemaining.length - suffixLen);
-
-  if (head.length === 0) {
-    return { kind: 'progress', nextRemaining, nextDone, corrections: [], correctionActive: false };
+  if (onCommutingSecondFace) {
+    const kind: ScrambleMoveKind = residualSameFace ? 'partial' : 'progress';
+    if (!correctionActive) {
+      return { kind, nextRemaining, nextDone, corrections: [], correctionActive: false };
+    }
+    const corrections = correctionHead(nextRemaining, scrambleMoves);
+    return { kind, nextRemaining, nextDone, corrections, correctionActive: corrections.length > 0 };
   }
 
-  // `pivot` is the scramble move the correction head sits in front of.
-  const pivot = scrambleMoves[scrambleMoves.length - suffixLen - 1];
-  const isSameFacePartial =
-    head.length === 1 && pivot !== undefined && sameFace(head[0], pivot);
+  // Off the immediate path entirely, or re-turning an already-owed pivot face while a
+  // correction is active — a fresh/compounded mistake, unless this exact turn objectively
+  // shrinks the true remaining distance (undoing/discharging the owed correction).
+  const corrections = correctionHead(nextRemaining, scrambleMoves);
+  const shrank = nextRemaining.length < prevRemaining.length;
+  const kind: ScrambleMoveKind = onPivotFace && shrank ? 'progress' : 'error';
 
-  if (isSameFacePartial && !correctionActive) {
-    return { kind: 'partial', nextRemaining, nextDone, corrections: head, correctionActive: false };
-  }
-
-  // A correction is owed. If this turn shrank the correction burden it's forward
-  // progress toward the fix; otherwise it's a fresh or compounded mistake.
-  const prevRemaining = remainingFor(scrambleMoves, doneMoves);
-  const prevHeadLen = correctionHead(prevRemaining, scrambleMoves).length;
-  const kind: ScrambleMoveKind = head.length < prevHeadLen ? 'progress' : 'error';
-
-  return { kind, nextRemaining, nextDone, corrections: head, correctionActive: true };
+  return {
+    kind,
+    nextRemaining,
+    nextDone,
+    corrections,
+    correctionActive: kind !== 'progress' || corrections.length > 0,
+  };
 }
 
 /**

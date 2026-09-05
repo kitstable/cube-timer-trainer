@@ -178,3 +178,11 @@ export function sameFace(a: string, b: string): boolean {
 export function isSimpleFaceMove(move: string): boolean {
   return Boolean(parseMoveToken(move)?.mergeable);
 }
+
+/**
+ * The face that commutes with `face` under `simplifyMoveSequence`'s merge rule
+ * (`U`<->`D`, `L`<->`R`, `F`<->`B`), or `undefined` for anything else.
+ */
+export function oppositeFace(face: string): string | undefined {
+  return OPPOSITE_FACES[face];
+}

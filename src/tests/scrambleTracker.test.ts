@@ -4,6 +4,7 @@ import {
   feedbackForClassification,
   type ScrambleClassification,
 } from '../utils/scrambleTracker';
+import { moveFace, oppositeFace, simplifyMoveSequence } from '../utils/moveSimplifier';
 
 /** Thread a run of physical turns through the tracker. */
 function run(scramble: string[], moves: string[]): ScrambleClassification {
@@ -119,6 +120,137 @@ describe('classifyScrambleMove', () => {
     const r = run(S, ['R', "R'", "L'", 'D', 'F2']);
     expect(r.kind).toBe('complete');
     expect(r.nextRemaining).toEqual([]);
+  });
+
+  it('does not let a repeated face+direction elsewhere in the sequence mask a half-turned double', () => {
+    // `L` appears twice — once as its own move, once as half of the later `L2`. A whole-array
+    // literal-token match can spuriously accept the L2's first quarter-turn as `progress`
+    // (matching against the *first* L) instead of `partial`.
+    const scramble = ['L', 'U', 'L2', 'D', 'F2', 'R2'];
+    const r = run(scramble, ['L', 'U', 'L']);
+    expect(r.kind).toBe('partial');
+    expect(r.nextRemaining).toEqual(['L', 'D', 'F2', 'R2']);
+  });
+
+  it('classifies a correct move that commutes with an owed correction as still needing its residual turn, never as a fresh error', () => {
+    // Scramble is a single `R2`. The user turns `L` (wrong), then does the objectively correct
+    // next half-turn `R` — which commutes with the owed `L'` correction. A naive "did the
+    // correction's suffix-mismatch length grow" heuristic misclassifies this `R` as `error`.
+    const scramble = ['R2'];
+    const afterWrong = run(scramble, ['L']);
+    expect(afterWrong.kind).toBe('error');
+    expect(afterWrong.nextRemaining).toEqual(["L'", 'R2']);
+
+    const afterCorrectHalf = run(scramble, ['L', 'R']);
+    expect(afterCorrectHalf.kind).toBe('partial');
+    expect(afterCorrectHalf.nextRemaining).toEqual(['R', "L'"]);
+    expect(afterCorrectHalf.correctionActive).toBe(true);
+
+    const recovered = run(scramble, ['L', 'R', 'R', "L'"]);
+    expect(recovered.kind).toBe('complete');
+    expect(recovered.nextRemaining).toEqual([]);
+  });
+});
+
+describe('classifyScrambleMove — fuzz', () => {
+  // Deterministic PRNG (mulberry32), same pattern used in guidedConvergence.test.ts.
+  function mulberry32(seed: number) {
+    let a = seed;
+    return () => {
+      a |= 0;
+      a = (a + 0x6d2b79f5) | 0;
+      let t = Math.imul(a ^ (a >>> 15), 1 | a);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+
+  const FACES = ['U', 'D', 'L', 'R', 'F', 'B'];
+  const SUFFIXES = ['', "'", '2'];
+
+  // Real WCA scrambles and CFOP algorithms are always already canonical (no adjacent-same-face
+  // repeats, and no opposite-face-sandwiched triple like `R' L' R` that `simplifyMoveSequence`
+  // would itself fold further) — `classifyScrambleMove` assumes its `scrambleMoves` input has
+  // this property, exactly as the old whole-array `isSubsequence` check implicitly did too.
+  // Verify canonicity directly (round-trip through the simplifier) rather than trying to
+  // constructively avoid every pattern that could fold, since a fold can cascade through a
+  // stack of prior merges in ways that aren't visible from a fixed-size local window.
+  function randomCanonicalScramble(rand: () => number, len: number): string[] {
+    for (let attempt = 0; attempt < 50; attempt++) {
+      const moves: string[] = [];
+      let last = '';
+      for (let i = 0; i < len; i++) {
+        let f = FACES[Math.floor(rand() * FACES.length)];
+        while (f === last) f = FACES[Math.floor(rand() * FACES.length)];
+        last = f;
+        moves.push(f + SUFFIXES[Math.floor(rand() * SUFFIXES.length)]);
+      }
+      if (simplifyMoveSequence(moves).join(',') === moves.join(',')) return moves;
+    }
+    throw new Error('failed to generate a canonical random scramble');
+  }
+
+  const TRIALS = 3000;
+  const rand = mulberry32(0xc0ffee);
+
+  it('never classifies verbatim execution of the scramble as an error', () => {
+    for (let t = 0; t < TRIALS; t++) {
+      const scramble = randomCanonicalScramble(rand, 2 + Math.floor(rand() * 8));
+      let done: string[] = [];
+      let correctionActive = false;
+      for (let i = 0; i < scramble.length; i++) {
+        const cls = classifyScrambleMove(scramble, done, scramble[i], correctionActive);
+        expect(cls.kind === 'error').toBe(false);
+        done = cls.nextDone;
+        correctionActive = cls.correctionActive;
+      }
+    }
+  });
+
+  it('never classifies a genuinely wrong-face turn as progress/complete', () => {
+    for (let t = 0; t < TRIALS; t++) {
+      const scramble = randomCanonicalScramble(rand, 3 + Math.floor(rand() * 6));
+      const stopAt = 1 + Math.floor(rand() * (scramble.length - 1));
+      const done = scramble.slice(0, stopAt);
+      const remaining = run(scramble, done).nextRemaining;
+      if (remaining.length === 0) continue;
+      const nextFace = moveFace(remaining[0]);
+      let wrongFace = FACES[Math.floor(rand() * FACES.length)];
+      // Also avoid the one legitimate reorder tolerance (the commuting second token).
+      const secondFace = remaining.length > 1 ? moveFace(remaining[1]) : null;
+      const allowed = new Set([nextFace, secondFace && oppositeFace(nextFace!) === secondFace ? secondFace : null]);
+      let guard = 0;
+      while (allowed.has(wrongFace) && guard++ < 20) {
+        wrongFace = FACES[Math.floor(rand() * FACES.length)];
+      }
+      if (allowed.has(wrongFace)) continue; // couldn't find a truly wrong face this trial
+      const cls = classifyScrambleMove(scramble, done, wrongFace, false);
+      expect(['error']).toContain(cls.kind);
+    }
+  });
+
+  it('never classifies the first quarter-turn of a double as progress/complete', () => {
+    for (let t = 0; t < TRIALS; t++) {
+      const scramble = randomCanonicalScramble(rand, 2 + Math.floor(rand() * 6));
+      // Force the first move to be a double so we control the double's position exactly.
+      const doubled = [scramble[0].replace(/['2]*$/, '2'), ...scramble.slice(1)];
+      const half = doubled[0][0];
+      const cls = classifyScrambleMove(doubled, [], half, false);
+      expect(cls.kind).toBe('partial');
+    }
+  });
+
+  it('maintains correctionActive iff a non-empty correction is owed on error', () => {
+    for (let t = 0; t < TRIALS; t++) {
+      const scramble = randomCanonicalScramble(rand, 2 + Math.floor(rand() * 6));
+      const move = FACES[Math.floor(rand() * FACES.length)] + SUFFIXES[Math.floor(rand() * SUFFIXES.length)];
+      const cls = classifyScrambleMove(scramble, [], move, false);
+      if (cls.kind === 'error') {
+        expect(cls.correctionActive).toBe(true);
+        expect(cls.corrections.length).toBeGreaterThan(0);
+      }
+      expect(cls.nextRemaining.length === 0).toBe(cls.kind === 'complete');
+    }
   });
 });
 

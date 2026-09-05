@@ -3,7 +3,7 @@ import { connectSmartPuzzle } from 'cubing/bluetooth';
 import { useCubeStore } from '../store/useCubeStore';
 import { useAppStore } from '../store/useAppStore';
 import { useSolverWorker } from './useSolverWorker';
-import { isPatternSolved } from '../utils/kpuzzleHelper';
+import { isPatternSolved, guidedFeedMoveFrame } from '../utils/kpuzzleHelper';
 import { classifyScrambleMove } from '../utils/scrambleTracker';
 import { createScramblePartialGate } from '../utils/scramblePartialGate';
 import { SCRAMBLE_PARTIAL_GRACE_MS } from '../utils/constants';
@@ -26,8 +26,12 @@ export async function readActiveSmartCubePattern(): Promise<any | null> {
   }
 }
 
-/** Modes whose views drive the physical move-sequence tracker (Scramble guide, Training drills). */
-const TRACKING_MODES: AppMode[] = ['scramble', 'training'];
+/**
+ * Modes whose views drive the physical move-sequence tracker (Scramble guide, Training
+ * drills, and the connected Guided Solve walkthrough — see `armed` below for how Guided's
+ * gating differs from Scramble/Training's).
+ */
+const TRACKING_MODES: AppMode[] = ['scramble', 'training', 'guided'];
 
 /**
  * Defers a same-face "partial" turn briefly so a fluid double turn (`R2` arriving as two
@@ -48,6 +52,23 @@ const scramblePartialGate = createScramblePartialGate({
   },
   graceMs: SCRAMBLE_PARTIAL_GRACE_MS,
 });
+
+// A partial mid-grace-window belongs to whatever target/progress it was held against. If the
+// tracked target OR its progress is reset out from under the gate by something other than the
+// gate's own commit (a new scramble, a new training rep, a fresh Guided hint, a manual
+// "Reset"), the held move must be dropped rather than committed later against unrelated state.
+// `trackDoneMoves` is watched too: `resetScrambleProgress`/`resetPhysicalTrack` rewind progress
+// without changing the target array's identity. Reacting to the gate's OWN commit (which also
+// changes `trackDoneMoves`) is a safe no-op — the gate always clears its held move *before*
+// calling `commit`, so there's nothing left to reset by the time this runs.
+useAppStore.subscribe((state, prevState) => {
+  if (state.trackTargetMoves !== prevState.trackTargetMoves || state.trackDoneMoves !== prevState.trackDoneMoves) {
+    scramblePartialGate.reset();
+  }
+});
+
+/** Test-only access to the module-level gate singleton (see `useSmartCubeGateLifecycle.test.ts`). */
+export const __scramblePartialGateForTests = scramblePartialGate;
 
 /**
  * Reads the physical cube's pattern from the puzzle (when the protocol supports it) and,
@@ -169,18 +190,34 @@ export function useSmartCube() {
         // Dispatch move directly to store — every physical turn updates ground truth.
         applyMove(moveStr, timestamp);
 
-        // In a tracking mode (Scramble guide / Training drill), feed every turn to the
-        // move-sequence tracker: it advances on the expected move, absorbs same-face
-        // partials, and prepends correction moves for wrong turns (see
-        // utils/scrambleTracker.ts). But don't start tracking until the cube is actually
-        // solved — otherwise turning a still-scrambled cube (e.g. after connecting
-        // scrambled and routing through Timed) processes junk moves.
-        const { activeMode, trackTargetMoves, trackDoneMoves } = useAppStore.getState();
+        // In a tracking mode (Scramble guide / Training drill / connected Guided Solve),
+        // feed every turn to the move-sequence tracker: it advances on the expected move,
+        // absorbs same-face partials, and prepends correction moves for wrong turns (see
+        // utils/scrambleTracker.ts). Scramble/Training don't start tracking until the cube
+        // is actually solved — otherwise turning a still-scrambled cube (e.g. after
+        // connecting scrambled and routing through Timed) processes junk moves. Guided's
+        // hint is computed from wherever the cube currently is (not "replay a scramble from
+        // solved"), so it always bypasses that solved-gate, but still pauses while a fresh
+        // hint is being recomputed (`guidedRecomputing`) so a turn made mid-fetch isn't
+        // misclassified against the about-to-be-replaced target.
+        const { activeMode, trackTargetMoves, trackDoneMoves, connectedYellowUp, guidedRecomputing } =
+          useAppStore.getState();
         // `hasHeld()` — a partial from move #1 is mid-grace-window; its second quarter-turn
         // must still reach the gate so a leading double turn resolves cleanly.
-        const armed = trackDoneMoves.length > 0 || wasSolvedBeforeMove || scramblePartialGate.hasHeld();
+        const armed =
+          (activeMode === 'guided' && !guidedRecomputing) ||
+          trackDoneMoves.length > 0 ||
+          wasSolvedBeforeMove ||
+          scramblePartialGate.hasHeld();
         if (TRACKING_MODES.includes(activeMode) && trackTargetMoves.length > 0 && armed) {
-          scramblePartialGate.feed(moveStr);
+          // Guided's target frame follows the yellow-up display preference (see
+          // `guidedPlanMoves`/`guidedFeedMoveFrame` in kpuzzleHelper.ts and GuidedSolveView's
+          // `fetchHintForCurrentPhase`): raw by default, post-z2 when `connectedYellowUp` is
+          // on. Relabel the copy fed to the gate/classifier to match — `applyMove` above
+          // always keeps the raw physical move for ground truth/history.
+          const feedMove =
+            activeMode === 'guided' ? guidedFeedMoveFrame(moveStr, connectedYellowUp) : moveStr;
+          scramblePartialGate.feed(feedMove);
         }
       });
 

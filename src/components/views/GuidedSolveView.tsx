@@ -7,9 +7,7 @@ import { useCubeStore } from '../../store/useCubeStore';
 import { useAppStore } from '../../store/useAppStore';
 import { useSolverWorker } from '../../hooks/useSolverWorker';
 import { evaluateCFOPFromPattern } from '../../utils/phaseDetector';
-import { classifyScrambleMove, feedbackForClassification } from '../../utils/scrambleTracker';
-import { createScramblePartialGate, type ScramblePartialGate } from '../../utils/scramblePartialGate';
-import { relabelMoveZ2, toZ2DisplayAlg, isAllFaceTurns } from '../../utils/kpuzzleHelper';
+import { toZ2DisplayAlg, isAllFaceTurns, guidedPlanMoves } from '../../utils/kpuzzleHelper';
 import {
   trackFeedbackPanelClass,
   trackFeedbackBadgeClass,
@@ -17,8 +15,8 @@ import {
   TrackFeedbackMessage,
 } from '../ui/TrackFeedback';
 import { saveSolve } from '../../db/repository';
-import { PHASE_DISPLAY_NAMES, ALL_F2L_SLOTS, getMoveDescription, SCRAMBLE_PARTIAL_GRACE_MS } from '../../utils/constants';
-import type { CFOPPhase, F2LSlotId, MoveHint, ScrambleFeedback, TechniqueTier, NotationMode } from '../../types/cube';
+import { PHASE_DISPLAY_NAMES, ALL_F2L_SLOTS, getMoveDescription } from '../../utils/constants';
+import type { CFOPPhase, F2LSlotId, MoveHint, TechniqueTier, NotationMode } from '../../types/cube';
 import { useIsDesktop } from '../../hooks/useMediaQuery';
 
 /**
@@ -26,14 +24,18 @@ import { useIsDesktop } from '../../hooks/useMediaQuery';
  *
  * With a smart cube connected the hint is computed from the *live* physical `KPattern`
  * (`physicalPattern · z2`) — no fabricated scramble, no independent state. It then walks you
- * through that hint one move at a time: each correct physical turn ticks the next move off
- * (via the same pure `classifyScrambleMove` tracker the Scramble guide uses, so half-turns,
- * commuting moves etc. are handled). A wrong/unexpected turn, or finishing the current step,
- * recomputes a fresh hint from the real state — so the guide is always correct without
- * fragile "undo the mistake" logic, but it doesn't churn a new alg on every single turn.
+ * through that hint one move at a time, via the same shared move-sequence tracker
+ * (`useAppStore`'s `trackTargetMoves`/`trackDoneMoves`/`trackRemainingMoves`/`trackFeedback`,
+ * fed by `useSmartCube.ts`'s BLE listener + partial gate) that the Scramble guide and Training
+ * reps use — so half-turns, commuting moves, and wrong-turn corrections are all handled
+ * identically across the three surfaces instead of drifting apart. Reaching the end of a plan
+ * (`trackRemainingMoves` empty) recomputes a fresh hint from the real state — so the guide is
+ * always correct without fragile "undo the mistake" logic, but it doesn't churn a new alg on
+ * every single turn.
  *
  * Without a cube it's the manual practice path: seed from the Scramble-tab scramble (or make
  * one), and step through the hint with the Next-move button / ribbon (virtual `applyMove`).
+ * That path is untouched by the shared tracker — it uses its own `currentHint`/`hintMoveIndex`.
  */
 export const GuidedSolveView: React.FC = () => {
   const {
@@ -47,8 +49,23 @@ export const GuidedSolveView: React.FC = () => {
     setScramble: setCubeStoreScramble,
   } = useCubeStore();
   const physicalPattern = useCubeStore((s) => s.physicalPattern);
-  const { currentScramble, currentProfileId, setScramble: setAppScramble, setMode, techniqueTier, setTechniqueTier, notationMode, setNotationMode, connectedYellowUp } =
-    useAppStore();
+  const {
+    currentScramble,
+    currentProfileId,
+    setScramble: setAppScramble,
+    setMode,
+    techniqueTier,
+    setTechniqueTier,
+    notationMode,
+    setNotationMode,
+    connectedYellowUp,
+    trackTargetMoves,
+    trackDoneMoves,
+    trackRemainingMoves,
+    trackFeedback: feedback,
+    setTrackTarget,
+    setGuidedRecomputing,
+  } = useAppStore();
   const { findHint, generateScramble, isReady } = useSolverWorker();
   const isDesktop = useIsDesktop();
 
@@ -66,26 +83,12 @@ export const GuidedSolveView: React.FC = () => {
   const solveStartRef = useRef<{ ts: number; moveCount: number } | null>(null);
   const solveSavedRef = useRef<boolean>(false);
 
-  // Connected: live progress through the current hint. `planRemaining` / `planDone` are in
-  // the raw smart-cube move frame (what you physically turn); the refs mirror them for the
-  // move-consuming effect. `consumedMovesRef` marks how far into `moveHistory` we've read.
-  const [planRemaining, setPlanRemaining] = useState<string[]>([]);
-  const [planDone, setPlanDone] = useState<string[]>([]);
-  /** Transient wrong-turn / half-turn cue, mirroring the Scramble guide's feedback. */
-  const [feedback, setFeedback] = useState<ScrambleFeedback | null>(null);
-  const planRawRef = useRef<string[]>([]);
-  const planDoneRef = useRef<string[]>([]);
-  const planCorrectionRef = useRef<boolean>(false);
-  const consumedMovesRef = useRef<number>(0);
-  const recomputingRef = useRef<boolean>(false);
-  // Same half-turn deferral the Scramble guide uses: a physical `R2` arrives as two `R`
-  // events, so the first would otherwise flash the amber "half turn" cue for ~50ms until
-  // the second lands. The gate holds a `partial` for the grace window; a second turn in
-  // that window commits the held one and a clean double resolves to `progress` with no
-  // flash. `applyPlanMoveRef` is re-pointed each render so the gate always commits through
-  // the current `fetchHintForCurrentPhase` closure.
-  const partialGateRef = useRef<ScramblePartialGate | null>(null);
-  const applyPlanMoveRef = useRef<(mv: string) => void>(() => {});
+  // Connected: live progress through the current hint, read from the shared tracker
+  // (`trackDoneMoves`/`trackRemainingMoves`/`feedback` above). `fetchInFlightRef` guards
+  // against re-entrant "plan complete -> fetch a new one" calls.
+  const planDone = trackDoneMoves;
+  const planRemaining = trackRemainingMoves;
+  const fetchInFlightRef = useRef<boolean>(false);
 
   /** The pattern the hint engine should read, always in the app's post-z2 frame. */
   const getHintPattern = useCallback(() => {
@@ -100,10 +103,6 @@ export const GuidedSolveView: React.FC = () => {
     async (tierOverride?: TechniqueTier, notationOverride?: NotationMode, deliberate = false) => {
       const hintPattern = getHintPattern();
       if (!hintPattern || !isReady) return;
-      // Snapshot the move count *now* — the hint is computed from the cube state as of this
-      // moment, so any turns made during the (async) `findHint` round-trip must still be
-      // classified against the new plan afterwards, not silently swallowed.
-      const moveCountAtFetch = useCubeStore.getState().moveHistory.length;
 
       const status = evaluateCFOPFromPattern(hintPattern);
       const phase = status.currentPhase;
@@ -113,7 +112,10 @@ export const GuidedSolveView: React.FC = () => {
       const activeTier = tierOverride || techniqueTier;
       const activeNotation = notationOverride || notationMode;
       setIsCalculating(true);
-      recomputingRef.current = true;
+      // Pauses the shared BLE listener's Guided-mode feed while this is true (see
+      // `useSmartCube.ts`) — a turn made mid-recompute must not be classified against the
+      // about-to-be-replaced `trackTargetMoves`. Mirrors the old local `recomputingRef` guard.
+      setGuidedRecomputing(true);
       try {
         const nextUnsolvedSlot = ALL_F2L_SLOTS.find((s) => !status.solvedSlots.includes(s));
         const res = await findHint(
@@ -136,31 +138,26 @@ export const GuidedSolveView: React.FC = () => {
             rawAlg: moves.join(' '),
           });
           setHintMoveIndex(0);
-          setFeedback(null);
-          // Seed live walkthrough tracking against this hint. `findHint` returns moves in the
-          // post-z2 frame. Default (white-up 3D view): relabel them into the raw smart-cube
-          // frame so the written algorithm matches a white-up cube and lines up with raw
-          // `moveHistory` turns. Yellow-up view (`connectedYellowUp`): keep them post-z2 — the
-          // move-consuming effect relabels incoming physical turns to match — so the algorithm
-          // reads for a yellow-up cube, consistent with the flipped 3D view.
-          const planFrameYellowUp = useAppStore.getState().connectedYellowUp;
-          const planMoves = planFrameYellowUp ? moves : moves.map(relabelMoveZ2);
-          planRawRef.current = planMoves;
-          planDoneRef.current = [];
-          planCorrectionRef.current = false;
-          partialGateRef.current?.reset(); // drop any half-turn held against the old plan
-          setPlanRemaining(planMoves);
-          setPlanDone([]);
-          consumedMovesRef.current = moveCountAtFetch;
+          // Seed live walkthrough tracking against this hint via the shared tracker (the same
+          // one Scramble/Training use — see `useAppStore.setTrackTarget`). `findHint` returns
+          // moves in the post-z2 frame. Default (white-up 3D view): relabel them into the raw
+          // smart-cube frame so the written algorithm matches a white-up cube and lines up with
+          // raw `moveHistory` turns. Yellow-up view (`connectedYellowUp`): keep them post-z2 —
+          // the shared BLE listener relabels incoming physical turns to match (see
+          // `useSmartCube.ts`) — so the algorithm reads for a yellow-up cube, consistent with
+          // the flipped 3D view. This computation must stay exactly as-is: the target frame and
+          // the incoming-move frame have to agree, or turns silently misclassify.
+          const planMoves = guidedPlanMoves(moves, useAppStore.getState().connectedYellowUp);
+          if (connected) setTrackTarget(planMoves);
         }
       } catch (err) {
         console.warn('Failed to calculate guidance hint:', err);
       } finally {
         setIsCalculating(false);
-        recomputingRef.current = false;
+        setGuidedRecomputing(false);
       }
     },
-    [getHintPattern, isReady, findHint, techniqueTier, notationMode]
+    [getHintPattern, isReady, findHint, techniqueTier, notationMode, connected, setTrackTarget, setGuidedRecomputing]
   );
 
   // Init on mount / connection change.
@@ -196,86 +193,33 @@ export const GuidedSolveView: React.FC = () => {
     if (isReady && !connected && pattern && !currentHint) fetchHintForCurrentPhase();
   }, [isReady, connected, pattern, currentHint, fetchHintForCurrentPhase]);
 
-  // Commit one physical turn to the walkthrough plan. Classified by the pure
-  // `classifyScrambleMove` (the Scramble guide's tracker): a match ticks a move off; a
-  // wrong / half turn keeps the plan, raises the cue and prepends correction move(s) so the
-  // guide leads you back on track (not a new alg); a rotation is a no-op. Only *finishing*
-  // the step (`complete`) recomputes the next hint. The cue is NOT time-faded — this
-  // function is the only thing that changes it (progress/complete clear it, wrong/half
-  // replace it, rotation leaves it), so it can't drift out of sync with `planRemaining`.
-  const applyPlanMove = useCallback(
-    (mv: string) => {
-      const cls = classifyScrambleMove(planRawRef.current, planDoneRef.current, mv, planCorrectionRef.current);
-      if (cls.kind === 'ignored') return;
-      if (cls.kind === 'complete') {
-        setFeedback(null);
-        partialGateRef.current?.reset();
-        fetchHintForCurrentPhase();
-        return;
-      }
-      planDoneRef.current = cls.nextDone;
-      planCorrectionRef.current = cls.correctionActive;
-      setPlanRemaining(cls.nextRemaining);
-      setPlanDone(cls.nextDone);
-      setFeedback(feedbackForClassification(cls));
-    },
-    [fetchHintForCurrentPhase]
-  );
-  applyPlanMoveRef.current = applyPlanMove;
-
-  if (partialGateRef.current === null) {
-    partialGateRef.current = createScramblePartialGate({
-      classify: (mv) =>
-        classifyScrambleMove(planRawRef.current, planDoneRef.current, mv, planCorrectionRef.current).kind,
-      commit: (mv) => applyPlanMoveRef.current(mv),
-      graceMs: SCRAMBLE_PARTIAL_GRACE_MS,
+  // Connected: the shared tracker (`useSmartCube.ts`'s BLE listener + partial gate,
+  // `useAppStore.applyPhysicalTrackMove`) already classifies every physical turn against
+  // `trackTargetMoves` — a match ticks a move off, a wrong/half turn raises `trackFeedback`
+  // and prepends correction move(s), a rotation is a no-op. All this component needs to do is
+  // notice when the plan is exhausted and fetch the next one.
+  useEffect(() => {
+    if (!connected || !isReady) return;
+    if (trackTargetMoves.length === 0 || trackDoneMoves.length === 0) return;
+    if (trackRemainingMoves.length > 0) return;
+    if (fetchInFlightRef.current) return;
+    fetchInFlightRef.current = true;
+    fetchHintForCurrentPhase().finally(() => {
+      fetchInFlightRef.current = false;
     });
-  }
+  }, [connected, isReady, trackTargetMoves, trackDoneMoves.length, trackRemainingMoves.length, fetchHintForCurrentPhase]);
 
-  // Connected: consume new physical turns and walk through the current hint via the
-  // half-turn gate (so a double turn doesn't flash the "half turn" cue between its halves).
-  // `isCalculating` is a dep so this re-runs the moment a recompute finishes — any turns made
-  // during the async `findHint` window (when this effect early-returns) are then flushed and
-  // classified against the fresh plan rather than sitting unprocessed until the next turn.
+  // Leaving Guided while connected (switching tabs mid-solve) would otherwise leave the
+  // shared tracker holding Guided's last plan for whichever view mounts next — re-anchor it
+  // to the Scramble tab's own scramble so e.g. ScrambleView doesn't render Guided's leftover
+  // plan as if it were the WCA scramble.
   useEffect(() => {
-    if (!connected || !isReady || recomputingRef.current) return;
-    const hist = useCubeStore.getState().moveHistory;
-    if (hist.length < consumedMovesRef.current) {
-      // History shrank (header resync / calibrate) — plan is stale, start fresh.
-      consumedMovesRef.current = hist.length;
-      partialGateRef.current?.reset();
-      fetchHintForCurrentPhase();
-      return;
-    }
-    if (hist.length === consumedMovesRef.current) return;
-    // Physical turns arrive in the raw smart-cube frame. The walkthrough plan is in the raw
-    // frame by default, or post-z2 when the yellow-up 3D view is on (see
-    // `fetchHintForCurrentPhase`) — relabel incoming turns to match in that case.
-    const toPlanFrame = useAppStore.getState().connectedYellowUp
-      ? relabelMoveZ2
-      : (m: string) => m;
-    const fresh = hist.slice(consumedMovesRef.current).map((m) => toPlanFrame(m.move));
-    consumedMovesRef.current = hist.length;
-
-    if (planRawRef.current.length === 0) {
-      fetchHintForCurrentPhase();
-      return;
-    }
-
-    for (const mv of fresh) {
-      partialGateRef.current!.feed(mv);
-      // A `complete` synchronously kicked off a refetch (recomputingRef set before its
-      // first await) — stop; the rest of `fresh` is already folded into the new read.
-      if (recomputingRef.current) break;
-    }
-  }, [connected, isReady, physicalPattern, isCalculating, fetchHintForCurrentPhase]);
-
-  // Drop any held half-turn when the cube disconnects or the view unmounts, so its grace
-  // timer can't fire into a stale plan / unmounted component.
-  useEffect(() => {
-    if (!connected) partialGateRef.current?.reset();
-    return () => partialGateRef.current?.reset();
-  }, [connected]);
+    return () => {
+      const s = useAppStore.getState();
+      s.setTrackTarget(s.scrambleMoves);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Re-seed the walkthrough when the yellow-up display preference is toggled mid-solve — the
   // plan's move frame (raw vs post-z2) depends on it. Skip the initial mount; the init effect

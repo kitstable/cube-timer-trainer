@@ -48,6 +48,14 @@ interface AppStoreState {
   trackDoneMoves: string[];
   trackFeedback: ScrambleFeedback | null;
   trackCorrectionActive: boolean;
+  /**
+   * Guided Solve only: true while `fetchHintForCurrentPhase` is awaiting `findHint` for a
+   * fresh plan. The shared BLE listener (`useSmartCube.ts`) pauses feeding turns to the
+   * tracker for `'guided'` mode while this is true, so a turn made mid-recompute isn't
+   * misclassified against the about-to-be-replaced `trackTargetMoves` — mirrors the
+   * `recomputingRef` guard `GuidedSolveView` used before this pipeline was shared.
+   */
+  guidedRecomputing: boolean;
   isProfileModalOpen: boolean;
   techniqueTier: TechniqueTier;
   notationMode: NotationMode;
@@ -95,6 +103,7 @@ interface AppStoreState {
   setTechniqueTier: (tier: TechniqueTier) => void;
   setNotationMode: (mode: NotationMode) => void;
   setConnectedYellowUp: (value: boolean) => void;
+  setGuidedRecomputing: (value: boolean) => void;
 }
 
 export const useAppStore = create<AppStoreState>((set) => ({
@@ -108,6 +117,7 @@ export const useAppStore = create<AppStoreState>((set) => ({
   trackDoneMoves: [],
   trackFeedback: null,
   trackCorrectionActive: false,
+  guidedRecomputing: false,
   isProfileModalOpen: false,
   techniqueTier: '2look',
   notationMode: 'simplified',
@@ -208,4 +218,5 @@ export const useAppStore = create<AppStoreState>((set) => ({
     writeConnectedYellowUp(connectedYellowUp);
     set({ connectedYellowUp });
   },
+  setGuidedRecomputing: (guidedRecomputing) => set({ guidedRecomputing }),
 }));

@@ -131,6 +131,32 @@ export function toZ2DisplayAlg(rawAlgString: string): string {
   return t.split(/\s+/).map(relabelMoveZ2).join(' ');
 }
 
+/**
+ * Connected Guided Solve's target-frame split (see `GuidedSolveView.tsx`'s
+ * `fetchHintForCurrentPhase` and `useSmartCube.ts`'s BLE listener). `findHint` always returns
+ * moves in the post-z2 frame. Default (white-up 3D view, `yellowUp` false): relabel into the
+ * raw smart-cube frame, so the tracked target matches raw physical turns directly. Yellow-up
+ * view (`yellowUp` true): keep the target post-z2 — so the written algorithm reads for a
+ * yellow-up cube — and instead relabel *incoming* physical turns before they reach the
+ * classifier (`guidedFeedMoveFrame`, its required counterpart below). Getting one half of this
+ * split right without the other silently misclassifies every turn — see
+ * `src/tests/guidedFrameSplit.test.ts`.
+ */
+export function guidedPlanMoves(moves: string[], yellowUp: boolean): string[] {
+  return yellowUp ? moves : moves.map(relabelMoveZ2);
+}
+
+/**
+ * The incoming-move half of `guidedPlanMoves`'s split: the frame an incoming raw physical BLE
+ * turn must be relabelled to before it reaches the classifier, so it agrees with whichever
+ * frame `guidedPlanMoves` put the target in. Identity (raw, unchanged) by default; post-z2 when
+ * `yellowUp` is on. `relabelMoveZ2` is its own inverse for face turns, so this exactly undoes
+ * `guidedPlanMoves`'s relabel direction.
+ */
+export function guidedFeedMoveFrame(moveStr: string, yellowUp: boolean): string {
+  return yellowUp ? relabelMoveZ2(moveStr) : moveStr;
+}
+
 export function isPatternSolved(pattern: any): boolean {
   if (!pattern) return false;
   const pData = pattern.patternData || pattern;

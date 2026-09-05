@@ -253,6 +253,74 @@ describe('Guided solve converges for every scramble / tier / notation', () => {
     }
   }, 60_000);
 
+  it('connected walkthrough through the real partial gate: a real hint\'s double move splits into two quarter-turns and still resolves cleanly', async () => {
+    // Guided now shares the exact gate/tracker Scramble and Training use (`useSmartCube.ts`'s
+    // `scramblePartialGate` + `classifyScrambleMove`) instead of its own copy. A physical
+    // double turn arrives as two same-face quarter-turn BLE events — this drives a real hint's
+    // moves through the actual gate (splitting any `X2` token into two `X` events) and checks
+    // the walkthrough never flashes a spurious error/partial and still completes.
+    const { relabelMoveZ2 } = await import('../utils/kpuzzleHelper');
+    const { classifyScrambleMove } = await import('../utils/scrambleTracker');
+    const { createScramblePartialGate } = await import('../utils/scramblePartialGate');
+    const rand = mulberry32(0xC0DE);
+
+    for (let i = 0; i < 6; i++) {
+      const scr = scramble(rand);
+      let physical = kpuzzle.defaultPattern().applyAlg(new Alg(scr));
+      let solved = false;
+
+      for (let phaseIter = 0; phaseIter < 20 && !solved; phaseIter++) {
+        const hp = physical.applyAlg(new Alg('z2'));
+        const status = evaluateCFOPFromPattern(hp);
+        if (status.isFullySolved) {
+          solved = true;
+          break;
+        }
+        const phase = status.currentPhase === 'solved' ? 'pll' : status.currentPhase;
+        const slot = ALL_F2L_SLOTS.find((s) => !status.solvedSlots.includes(s));
+        const hint = await findHint(matcher, hp, { phase, activeSlot: slot, techniqueTier: '2look', notationMode: 'simplified' }, false);
+        const plan = hint.moves.map(relabelMoveZ2);
+        expect(plan.length, `${scr}: empty hint in ${phase}`).toBeGreaterThan(0);
+
+        let done: string[] = [];
+        let correction = false;
+        let committedError = false;
+        const gate = createScramblePartialGate({
+          classify: (mv) => classifyScrambleMove(plan, done, mv, correction).kind,
+          commit: (mv) => {
+            const cls = classifyScrambleMove(plan, done, mv, correction);
+            if (cls.kind === 'error') committedError = true;
+            done = cls.nextDone;
+            correction = cls.correctionActive;
+          },
+          graceMs: 10,
+          // Every move is fed back-to-back within this synchronous loop, so a held `partial`
+          // is always resolved by `feed()`'s own same-face merge (or `gate.flush()` at the end)
+          // before any real grace window would matter — the timer callback never needs to fire.
+          setTimer: () => 0 as any,
+          clearTimer: () => {},
+        });
+
+        // Split every double (`X2`) into two same-face quarter-turns, like real hardware.
+        for (const mv of plan) {
+          if (mv.endsWith('2')) {
+            const half = mv[0];
+            gate.feed(half);
+            gate.feed(half);
+          } else {
+            gate.feed(mv);
+          }
+        }
+        gate.flush();
+
+        expect(committedError, `${scr}: ${phase} plan desynced via the real gate`).toBe(false);
+        expect(done, `${scr}: ${phase} plan did not fully commit through the gate`).toEqual(plan);
+        for (const mv of plan) physical = physical.applyAlg(new Alg(mv));
+      }
+      expect(solved, `${scr}: gated walkthrough did not reach solved`).toBe(true);
+    }
+  }, 60_000);
+
   it('connected: a wrong turn yields a correction (not a fresh alg), then recovers', async () => {
     // Guided feeds turns into `classifyScrambleMove` against the current hint. A wrong turn
     // must classify `error` with correction moves (so the guide leads you back), and doing
