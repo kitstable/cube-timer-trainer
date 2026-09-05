@@ -177,23 +177,28 @@ export const TimedSolveView: React.FC = () => {
         // A completed/DNF'd solve stays on screen for review (splits, +2/DNF/delete) — a
         // stray tap/click anywhere while it's showing (e.g. to scroll or read the phase
         // breakdown) must not reset the timer and re-arm auto-start. Leaving 'completed'
-        // now requires the explicit "Start Next Solve" button below.
-        if (timerState === 'paused' || timerState === 'micro-solve' || timerState === 'completed') return;
+        // now requires the explicit "Start Next Solve" button below. Idle gets the same
+        // treatment: a bare screen tap no longer arms inspection (only every other
+        // transition had a hold-delay/dead-zone — idle fired instantly on touchdown, so
+        // any tap meant to scroll or navigate away from a just-finished solve restarted
+        // the countdown). Arming from idle now requires the explicit "Start Inspection"
+        // button or holding Spacebar.
+        if (timerState === 'paused' || timerState === 'micro-solve' || timerState === 'completed' || timerState === 'idle') return;
         if ((e.target as HTMLElement).closest('button, a, input, [role="button"], [role="dialog"]')) return;
         handleHoldStart();
       }}
       onMouseUp={(e) => {
-        if (timerState === 'paused' || timerState === 'micro-solve' || timerState === 'completed') return;
+        if (timerState === 'paused' || timerState === 'micro-solve' || timerState === 'completed' || timerState === 'idle') return;
         if ((e.target as HTMLElement).closest('button, a, input, [role="button"], [role="dialog"]')) return;
         handleHoldRelease();
       }}
       onTouchStart={(e) => {
-        if (timerState === 'paused' || timerState === 'micro-solve' || timerState === 'completed') return;
+        if (timerState === 'paused' || timerState === 'micro-solve' || timerState === 'completed' || timerState === 'idle') return;
         if ((e.target as HTMLElement).closest('button, a, input, [role="button"], [role="dialog"]')) return;
         handleHoldStart();
       }}
       onTouchEnd={(e) => {
-        if (timerState === 'paused' || timerState === 'micro-solve' || timerState === 'completed') return;
+        if (timerState === 'paused' || timerState === 'micro-solve' || timerState === 'completed' || timerState === 'idle') return;
         if ((e.target as HTMLElement).closest('button, a, input, [role="button"], [role="dialog"]')) return;
         handleHoldRelease();
       }}
@@ -210,7 +215,7 @@ export const TimedSolveView: React.FC = () => {
                 Session Ao5: <strong className="text-[var(--text)] font-mono">{stats.ao5 ? (stats.ao5 / 1000).toFixed(2) + 's' : '—'}</strong> · {stats.count} solves
               </span>
             ) : (
-              'Hold spacebar or touch screen to start'
+              'Hold Spacebar or tap Start Inspection to begin'
             )}
           </div>
         </div>
@@ -331,7 +336,7 @@ export const TimedSolveView: React.FC = () => {
                 ? (requireManualStart
                     ? 'Solve stopped · Tap Start or hold Spacebar to begin'
                     : 'Cube ready · Turn to start solve')
-                : 'Hold Spacebar or touch screen to start'}
+                : 'Hold Spacebar or tap Start Inspection to begin'}
             </div>
           )}
         </div>

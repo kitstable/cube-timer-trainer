@@ -228,6 +228,23 @@ Both are on `claude/smart-cube-connection-state-rs2s9a`.
      ✓, and flashes its phase colour for ~900ms (own 100ms tick so the active phase's clock
      and the flash expiry advance between physical turns). Uses the same `phaseRecognitionMs`
      as the post-solve breakdown.
+   - **Idle no longer accepts a bare screen tap to arm inspection (mobile fix).**
+     `TimedSolveView`'s root container is one big `onMouseDown`/`onTouchStart`/.../
+     tap-catcher spanning the whole screen (cube box, stats, timer, splits, buttons).
+     Every other state transition has a hold-delay or is intentionally instant for a
+     reason (`inspection`→`holding` requires a 300ms hold before arming `ready`;
+     `running`→stop is instant on purpose, so you can slap anywhere to stop). `idle`
+     was the odd one out — `handleHoldStart`'s `idle` branch fired `startInspection()`
+     the instant a touch landed, with no hold-and-still delay and no move/scroll
+     tolerance. So after stopping a solve and pressing "Start Next Solve" (→ `idle`),
+     the very next tap anywhere on the screen — meant to scroll, read the phase splits,
+     or navigate away — silently re-armed the 15s countdown. Fixed by adding `idle` to
+     the container's existing `paused`/`micro-solve`/`completed` "let the tap pass
+     through" guard — the same precedent already used for `completed` (a finished solve
+     must stay reviewable; the explicit "Start Next Solve" button is the only way out).
+     Arming from idle now requires the visible "Start Inspection" button or holding
+     Spacebar (the keyboard handler's guard is unchanged, so Spacebar-from-idle still
+     works — a stray keypress isn't the accidental-touch risk a stray tap is).
 
 ## Training mode & 2-Look drills (later session — see `resources/training-mode-spec.md`)
 
